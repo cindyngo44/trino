@@ -308,7 +308,7 @@ When a ``GROUP BY`` clause is used in a ``SELECT`` statement all output
 expressions must be either aggregate functions or columns present in
 the ``GROUP BY`` clause.
 
-.. _complex_grouping_operations:
+.. _complex-grouping-operations:
 
 Complex grouping operations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -635,7 +635,7 @@ with an account balance greater than the specified value::
       1247 | FURNITURE  |         8 |  5701952
     (7 rows)
 
-.. _window_clause:
+.. _window-clause:
 
 WINDOW clause
 -------------
@@ -702,18 +702,17 @@ to combine the results of more than one select statement into a single result se
 
 .. code-block:: text
 
-    query INTERSECT [DISTINCT] query
+    query INTERSECT [ALL | DISTINCT] query
 
 .. code-block:: text
 
-    query EXCEPT [DISTINCT] query
+    query EXCEPT [ALL | DISTINCT] query
 
 The argument ``ALL`` or ``DISTINCT`` controls which rows are included in
 the final result set. If the argument ``ALL`` is specified all rows are
 included even if the rows are identical.  If the argument ``DISTINCT``
 is specified only unique rows are included in the combined result set.
-If neither is specified, the behavior defaults to ``DISTINCT``.  The ``ALL``
-argument is not supported for ``INTERSECT`` or ``EXCEPT``.
+If neither is specified, the behavior defaults to ``DISTINCT``.
 
 
 Multiple set operations are processed left to right, unless the order is explicitly
@@ -1032,7 +1031,7 @@ Using sampling with joins::
 UNNEST
 ------
 
-``UNNEST`` can be used to expand an :ref:`array_type` or :ref:`map_type` into a relation.
+``UNNEST`` can be used to expand an :ref:`array-type` or :ref:`map-type` into a relation.
 Arrays are expanded into a single column::
 
     SELECT * FROM UNNEST(ARRAY[1,2]) AS t(number);
@@ -1066,7 +1065,7 @@ Maps are expanded into two columns (key, value)::
      Java     |                1995
     (2 rows)
 
-``UNNEST`` can be used in combination with an ``ARRAY`` of :ref:`row_type` structures for expanding each
+``UNNEST`` can be used in combination with an ``ARRAY`` of :ref:`row-type` structures for expanding each
 field of the ``ROW`` into a corresponding column::
 
     SELECT *

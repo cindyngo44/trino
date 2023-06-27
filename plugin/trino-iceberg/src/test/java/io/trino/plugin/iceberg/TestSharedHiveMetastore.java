@@ -15,25 +15,17 @@ package io.trino.plugin.iceberg;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
 import io.trino.Session;
-import io.trino.plugin.hive.HdfsConfig;
-import io.trino.plugin.hive.HdfsConfigurationInitializer;
-import io.trino.plugin.hive.HdfsEnvironment;
-import io.trino.plugin.hive.HiveHdfsConfiguration;
-import io.trino.plugin.hive.NodeVersion;
 import io.trino.plugin.hive.TestingHivePlugin;
-import io.trino.plugin.hive.authentication.NoHdfsAuthentication;
-import io.trino.plugin.hive.metastore.HiveMetastore;
-import io.trino.plugin.hive.metastore.HiveMetastoreConfig;
-import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
-import io.trino.plugin.hive.metastore.file.FileHiveMetastoreConfig;
 import io.trino.plugin.tpch.TpchPlugin;
 import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
 import io.trino.tpch.TpchTable;
 import org.testng.annotations.AfterClass;
 
+import java.nio.file.Path;
+
+import static io.trino.plugin.hive.metastore.file.TestingFileHiveMetastore.createTestingFileHiveMetastore;
 import static io.trino.plugin.iceberg.IcebergQueryRunner.ICEBERG_CATALOG;
 import static io.trino.plugin.tpch.TpchMetadata.TINY_SCHEMA_NAME;
 import static io.trino.testing.QueryAssertions.copyTpchTables;
@@ -44,6 +36,7 @@ public class TestSharedHiveMetastore
         extends BaseSharedMetastoreTest
 {
     private static final String HIVE_CATALOG = "hive";
+    private Path dataDirectory;
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -81,19 +74,7 @@ public class TestSharedHiveMetastore
                         "hive.metastore.catalog.dir", dataDirectory.toString(),
                         "iceberg.hive-catalog-name", "hive"));
 
-        HdfsConfig hdfsConfig = new HdfsConfig();
-        HdfsEnvironment hdfsEnvironment = new HdfsEnvironment(
-                new HiveHdfsConfiguration(new HdfsConfigurationInitializer(hdfsConfig), ImmutableSet.of()),
-                hdfsConfig,
-                new NoHdfsAuthentication());
-        HiveMetastore metastore = new FileHiveMetastore(
-                new NodeVersion("testversion"),
-                hdfsEnvironment,
-                new HiveMetastoreConfig().isHideDeltaLakeTables(),
-                new FileHiveMetastoreConfig()
-                        .setCatalogDirectory(dataDirectory.toFile().toURI().toString())
-                        .setMetastoreUser("test"));
-        queryRunner.installPlugin(new TestingHivePlugin(metastore));
+        queryRunner.installPlugin(new TestingHivePlugin(createTestingFileHiveMetastore(dataDirectory.toFile())));
         queryRunner.createCatalog(HIVE_CATALOG, "hive", ImmutableMap.of("hive.allow-drop-table", "true"));
         queryRunner.createCatalog(
                 "hive_with_redirections",
@@ -119,7 +100,6 @@ public class TestSharedHiveMetastore
     protected String getExpectedHiveCreateSchema(String catalogName)
     {
         String expectedHiveCreateSchema = "CREATE SCHEMA %s.%s\n" +
-                "AUTHORIZATION USER user\n" +
                 "WITH (\n" +
                 "   location = 'file:%s/%s'\n" +
                 ")";

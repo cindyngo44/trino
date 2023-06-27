@@ -16,15 +16,15 @@ package io.trino.plugin.deltalake;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import io.opentelemetry.api.trace.Span;
 import io.trino.Session;
 import io.trino.execution.DynamicFilterConfig;
-import io.trino.execution.Lifespan;
 import io.trino.execution.QueryStats;
 import io.trino.metadata.QualifiedObjectName;
 import io.trino.metadata.Split;
 import io.trino.metadata.TableHandle;
 import io.trino.operator.OperatorStats;
-import io.trino.plugin.deltalake.util.DockerizedMinioDataLake;
+import io.trino.plugin.hive.containers.HiveMinioDataLake;
 import io.trino.security.AllowAllAccessControl;
 import io.trino.spi.QueryId;
 import io.trino.spi.connector.ColumnHandle;
@@ -33,9 +33,8 @@ import io.trino.spi.predicate.TupleDomain;
 import io.trino.split.SplitSource;
 import io.trino.sql.planner.OptimizerConfig.JoinDistributionType;
 import io.trino.testing.AbstractTestQueryFramework;
-import io.trino.testing.MaterializedResult;
+import io.trino.testing.MaterializedResultWithQueryId;
 import io.trino.testing.QueryRunner;
-import io.trino.testing.ResultWithQueryId;
 import io.trino.transaction.TransactionId;
 import io.trino.transaction.TransactionManager;
 import org.testng.annotations.DataProvider;
@@ -54,12 +53,11 @@ import static io.airlift.concurrent.MoreFutures.unmodifiableFuture;
 import static io.airlift.testing.Assertions.assertEqualsIgnoreOrder;
 import static io.airlift.testing.Assertions.assertGreaterThan;
 import static io.trino.SystemSessionProperties.ENABLE_DYNAMIC_FILTERING;
-import static io.trino.plugin.deltalake.DeltaLakeDockerizedMinioDataLake.createDockerizedMinioDataLakeForDeltaLake;
 import static io.trino.plugin.deltalake.DeltaLakeQueryRunner.DELTA_CATALOG;
-import static io.trino.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.UNGROUPED_SCHEDULING;
+import static io.trino.plugin.deltalake.DeltaLakeQueryRunner.createS3DeltaLakeQueryRunner;
 import static io.trino.spi.connector.Constraint.alwaysTrue;
-import static io.trino.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
 import static io.trino.testing.DataProviders.toDataProvider;
+import static io.trino.testing.TestingNames.randomNameSuffix;
 import static io.trino.tpch.TpchTable.LINE_ITEM;
 import static io.trino.tpch.TpchTable.ORDERS;
 import static java.lang.String.format;
@@ -69,29 +67,32 @@ import static org.testng.Assert.assertTrue;
 public class TestDeltaLakeDynamicFiltering
         extends AbstractTestQueryFramework
 {
-    private static final String BUCKET_NAME = "delta-lake-test-dynamic-filtering";
+    private final String bucketName = "delta-lake-test-dynamic-filtering-" + randomNameSuffix();
+    private HiveMinioDataLake hiveMinioDataLake;
 
     @Override
     protected QueryRunner createQueryRunner()
             throws Exception
     {
         verify(new DynamicFilterConfig().isEnableDynamicFiltering(), "this class assumes dynamic filtering is enabled by default");
-        DockerizedMinioDataLake dockerizedMinioDataLake = closeAfterClass(createDockerizedMinioDataLakeForDeltaLake(BUCKET_NAME));
-        QueryRunner queryRunner = DeltaLakeQueryRunner.createS3DeltaLakeQueryRunner(
+        hiveMinioDataLake = closeAfterClass(new HiveMinioDataLake(bucketName));
+        hiveMinioDataLake.start();
+
+        QueryRunner queryRunner = createS3DeltaLakeQueryRunner(
                 DELTA_CATALOG,
                 "default",
-                ImmutableMap.of(),
-                dockerizedMinioDataLake.getMinioAddress(),
-                dockerizedMinioDataLake.getTestingHadoop());
+                ImmutableMap.of("delta.register-table-procedure.enabled", "true"),
+                hiveMinioDataLake.getMinio().getMinioAddress(),
+                hiveMinioDataLake.getHiveHadoop());
 
         ImmutableList.of(LINE_ITEM, ORDERS).forEach(table -> {
             String tableName = table.getTableName();
-            dockerizedMinioDataLake.copyResources("io/trino/plugin/deltalake/testing/resources/databricks/" + tableName, tableName);
-            queryRunner.execute(format("CREATE TABLE %s.%s.%s (dummy int) WITH (location = 's3://%s/%3$s')",
+            hiveMinioDataLake.copyResources("io/trino/plugin/deltalake/testing/resources/databricks/" + tableName, tableName);
+            queryRunner.execute(format("CALL %1$s.system.register_table('%2$s', '%3$s', 's3://%4$s/%3$s')",
                     DELTA_CATALOG,
                     "default",
                     tableName,
-                    BUCKET_NAME));
+                    bucketName));
         });
         return queryRunner;
     }
@@ -107,8 +108,8 @@ public class TestDeltaLakeDynamicFiltering
     public void testDynamicFiltering(JoinDistributionType joinDistributionType)
     {
         String query = "SELECT * FROM lineitem JOIN orders ON lineitem.orderkey = orders.orderkey AND orders.totalprice > 59995 AND orders.totalprice < 60000";
-        ResultWithQueryId<MaterializedResult> filteredResult = getDistributedQueryRunner().executeWithQueryId(sessionWithDynamicFiltering(true, joinDistributionType), query);
-        ResultWithQueryId<MaterializedResult> unfilteredResult = getDistributedQueryRunner().executeWithQueryId(sessionWithDynamicFiltering(false, joinDistributionType), query);
+        MaterializedResultWithQueryId filteredResult = getDistributedQueryRunner().executeWithQueryId(sessionWithDynamicFiltering(true, joinDistributionType), query);
+        MaterializedResultWithQueryId unfilteredResult = getDistributedQueryRunner().executeWithQueryId(sessionWithDynamicFiltering(false, joinDistributionType), query);
         assertEqualsIgnoreOrder(filteredResult.getResult().getMaterializedRows(), unfilteredResult.getResult().getMaterializedRows());
 
         QueryInputStats filteredStats = getQueryInputStats(filteredResult.getQueryId());
@@ -132,10 +133,10 @@ public class TestDeltaLakeDynamicFiltering
         Optional<TableHandle> tableHandle = runner.getMetadata().getTableHandle(session, tableName);
         assertTrue(tableHandle.isPresent());
         SplitSource splitSource = runner.getSplitManager()
-                .getSplits(session, tableHandle.get(), UNGROUPED_SCHEDULING, new IncompleteDynamicFilter(), alwaysTrue());
+                .getSplits(session, Span.getInvalid(), tableHandle.get(), new IncompleteDynamicFilter(), alwaysTrue());
         List<Split> splits = new ArrayList<>();
         while (!splitSource.isFinished()) {
-            splits.addAll(splitSource.getNextBatch(NOT_PARTITIONED, Lifespan.taskWide(), 1000).get().getSplits());
+            splits.addAll(splitSource.getNextBatch(1000).get().getSplits());
         }
         splitSource.close();
         assertFalse(splits.isEmpty());

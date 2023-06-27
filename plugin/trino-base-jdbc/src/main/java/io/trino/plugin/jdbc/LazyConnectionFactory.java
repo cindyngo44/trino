@@ -13,12 +13,12 @@
  */
 package io.trino.plugin.jdbc;
 
+import com.google.inject.Inject;
 import io.trino.spi.connector.ConnectorSession;
 
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
-import javax.inject.Inject;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -68,7 +68,7 @@ public final class LazyConnectionFactory
         }
 
         @Override
-        protected synchronized Connection getDelegate()
+        protected synchronized Connection delegate()
                 throws SQLException
         {
             checkState(!closed, "Connection is already closed");

@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.mariadb;
 
+import io.trino.testing.ResourcePresence;
 import org.testcontainers.containers.MariaDBContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -41,7 +42,9 @@ public class TestingMariaDbServer
     {
         container = new MariaDBContainer<>(DockerImageName.parse("mariadb").withTag(tag))
                 .withDatabaseName("tpch");
-        container.withCommand("--character-set-server", "utf8mb4"); // The default character set is latin1
+        // character-set-server：the default character set is latin1
+        // explicit-defaults-for-timestamp: 1 is ON, the default set is 0 (OFF)
+        container.withCommand("--character-set-server", "utf8mb4", "--explicit-defaults-for-timestamp=1");
         container.start();
         execute(format("GRANT ALL PRIVILEGES ON *.* TO '%s'", container.getUsername()), "root", container.getPassword());
     }
@@ -74,12 +77,18 @@ public class TestingMariaDbServer
 
     public String getJdbcUrl()
     {
-        return format("jdbc:mariadb://%s:%s", container.getContainerIpAddress(), container.getMappedPort(MARIADB_PORT));
+        return format("jdbc:mariadb://%s:%s", container.getHost(), container.getMappedPort(MARIADB_PORT));
     }
 
     @Override
     public void close()
     {
         container.close();
+    }
+
+    @ResourcePresence
+    public boolean isRunning()
+    {
+        return container.getContainerId() != null;
     }
 }

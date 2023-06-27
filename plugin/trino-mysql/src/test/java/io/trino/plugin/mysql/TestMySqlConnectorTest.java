@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableMap;
 import io.trino.testing.QueryRunner;
 
 import static io.trino.plugin.mysql.MySqlQueryRunner.createMySqlQueryRunner;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestMySqlConnectorTest
         extends BaseMySqlConnectorTest
@@ -27,5 +28,11 @@ public class TestMySqlConnectorTest
     {
         mySqlServer = closeAfterClass(new TestingMySqlServer(false));
         return createMySqlQueryRunner(mySqlServer, ImmutableMap.of(), ImmutableMap.of(), REQUIRED_TPCH_TABLES);
+    }
+
+    @Override
+    protected void verifyColumnNameLengthFailurePermissible(Throwable e)
+    {
+        assertThat(e).hasMessageMatching("(Incorrect column name '.*'|Identifier name '.*' is too long)");
     }
 }

@@ -15,6 +15,7 @@ package io.trino.execution;
 
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.Inject;
 import io.trino.Session;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.metadata.Metadata;
@@ -26,8 +27,6 @@ import io.trino.spi.TrinoException;
 import io.trino.sql.tree.Expression;
 import io.trino.sql.tree.QualifiedName;
 import io.trino.sql.tree.RenameTable;
-
-import javax.inject.Inject;
 
 import java.util.List;
 
@@ -100,15 +99,21 @@ public class RenameTableTask
         if (metadata.getCatalogHandle(session, target.getCatalogName()).isEmpty()) {
             throw semanticException(CATALOG_NOT_FOUND, statement, "Target catalog '%s' does not exist", target.getCatalogName());
         }
+        if (metadata.isMaterializedView(session, target)) {
+            throw semanticException(GENERIC_USER_ERROR, statement, "Target table '%s' does not exist, but a materialized view with that name exists.", target);
+        }
+        if (metadata.isView(session, target)) {
+            throw semanticException(GENERIC_USER_ERROR, statement, "Target table '%s' does not exist, but a view with that name exists.", target);
+        }
         if (metadata.getTableHandle(session, target).isPresent()) {
             throw semanticException(TABLE_ALREADY_EXISTS, statement, "Target table '%s' already exists", target);
         }
-        if (!tableHandle.getCatalogName().getCatalogName().equals(target.getCatalogName())) {
+        if (!tableHandle.getCatalogHandle().getCatalogName().equals(target.getCatalogName())) {
             throw semanticException(NOT_SUPPORTED, statement, "Table rename across catalogs is not supported");
         }
         accessControl.checkCanRenameTable(session.toSecurityContext(), source, target);
 
-        metadata.renameTable(session, tableHandle, target);
+        metadata.renameTable(session, tableHandle, source.asCatalogSchemaTableName(), target);
 
         return immediateVoidFuture();
     }

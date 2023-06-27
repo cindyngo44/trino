@@ -15,6 +15,7 @@ package io.trino.plugin.atop;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.inject.Inject;
 import io.trino.plugin.atop.AtopTable.AtopColumn;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
@@ -23,15 +24,12 @@ import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
-import io.trino.spi.connector.ConnectorTableProperties;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.type.TypeManager;
-
-import javax.inject.Inject;
 
 import java.util.List;
 import java.util.Map;
@@ -56,7 +54,7 @@ public class AtopMetadata
     public AtopMetadata(TypeManager typeManager, Environment environment)
     {
         this.typeManager = requireNonNull(typeManager, "typeManager is null");
-        this.environment = requireNonNull(environment, "environment is null").toString();
+        this.environment = environment.toString();
     }
 
     @Override
@@ -150,30 +148,22 @@ public class AtopMetadata
     }
 
     @Override
-    public ConnectorTableProperties getTableProperties(ConnectorSession session, ConnectorTableHandle table)
-    {
-        return new ConnectorTableProperties();
-    }
-
-    @Override
     public Optional<ConstraintApplicationResult<ConnectorTableHandle>> applyFilter(ConnectorSession session, ConnectorTableHandle table, Constraint constraint)
     {
         AtopTableHandle handle = (AtopTableHandle) table;
 
-        Optional<Map<ColumnHandle, Domain>> domains = constraint.getSummary().getDomains();
+        Map<ColumnHandle, Domain> domains = constraint.getSummary().getDomains().orElseThrow(() -> new IllegalArgumentException("constraint summary is NONE"));
 
         Domain oldEndTimeDomain = handle.getEndTimeConstraint();
         Domain oldStartTimeDomain = handle.getStartTimeConstraint();
         Domain newEndTimeDomain = oldEndTimeDomain;
         Domain newStartTimeDomain = oldStartTimeDomain;
 
-        if (domains.isPresent()) {
-            if (domains.get().containsKey(START_TIME_HANDLE)) {
-                newStartTimeDomain = domains.get().get(START_TIME_HANDLE).intersect(oldStartTimeDomain);
-            }
-            if (domains.get().containsKey(END_TIME_HANDLE)) {
-                newEndTimeDomain = domains.get().get(END_TIME_HANDLE).intersect(oldEndTimeDomain);
-            }
+        if (domains.containsKey(START_TIME_HANDLE)) {
+            newStartTimeDomain = domains.get(START_TIME_HANDLE).intersect(oldStartTimeDomain);
+        }
+        if (domains.containsKey(END_TIME_HANDLE)) {
+            newEndTimeDomain = domains.get(END_TIME_HANDLE).intersect(oldEndTimeDomain);
         }
 
         if (oldEndTimeDomain.equals(newEndTimeDomain) && oldStartTimeDomain.equals(newStartTimeDomain)) {

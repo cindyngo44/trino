@@ -16,9 +16,8 @@ package io.trino.plugin.iceberg;
 import io.trino.operator.RetryPolicy;
 import io.trino.spi.ErrorType;
 import io.trino.testing.BaseFailureRecoveryTest;
-import org.testng.annotations.Test;
+import org.testng.annotations.DataProvider;
 
-import java.util.List;
 import java.util.Optional;
 
 import static io.trino.execution.FailureInjector.FAILURE_INJECTION_MESSAGE;
@@ -27,8 +26,6 @@ import static io.trino.execution.FailureInjector.InjectedFailureType.TASK_GET_RE
 import static io.trino.execution.FailureInjector.InjectedFailureType.TASK_GET_RESULTS_REQUEST_TIMEOUT;
 import static io.trino.execution.FailureInjector.InjectedFailureType.TASK_MANAGEMENT_REQUEST_FAILURE;
 import static io.trino.execution.FailureInjector.InjectedFailureType.TASK_MANAGEMENT_REQUEST_TIMEOUT;
-import static java.lang.String.format;
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 public abstract class BaseIcebergFailureRecoveryTest
         extends BaseFailureRecoveryTest
@@ -45,26 +42,27 @@ public abstract class BaseIcebergFailureRecoveryTest
     }
 
     @Override
-    public void testAnalyzeStatistics()
+    @DataProvider(name = "parallelTests", parallel = true)
+    public Object[][] parallelTests()
     {
-        assertThatThrownBy(super::testAnalyzeStatistics)
-                .hasMessageContaining("This connector does not support analyze");
+        return moreParallelTests(super.parallelTests(),
+                parallelTest("testCreatePartitionedTable", this::testCreatePartitionedTable),
+                parallelTest("testInsertIntoNewPartition", this::testInsertIntoNewPartition),
+                parallelTest("testInsertIntoExistingPartition", this::testInsertIntoExistingPartition),
+                parallelTest("testMergePartitionedTable", this::testMergePartitionedTable));
     }
 
-    @Override
-    protected void createPartitionedLineitemTable(String tableName, List<String> columns, String partitionColumn)
+    protected void testCreatePartitionedTable()
     {
-        String sql = format(
-                "CREATE TABLE %s WITH (partitioning=array['%s']) AS SELECT %s FROM tpch.tiny.lineitem",
-                tableName,
-                partitionColumn,
-                String.join(",", columns));
-        getQueryRunner().execute(sql);
+        testTableModification(
+                Optional.empty(),
+                "CREATE TABLE <table> WITH (partitioning = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders",
+                Optional.of("DROP TABLE <table>"));
     }
 
     // Copied from BaseDeltaFailureRecoveryTest
     @Override
-    public void testDelete()
+    protected void testDelete()
     {
         // Test method is overriden because method from superclass assumes more complex plan for `DELETE` query.
         // Assertions do not play well if plan consists of just two fragments.
@@ -104,28 +102,10 @@ public abstract class BaseIcebergFailureRecoveryTest
                 .failsWithoutRetries(failure -> failure.hasMessageContaining(FAILURE_INJECTION_MESSAGE))
                 .finishesSuccessfully();
 
-        // DELETE plan is too simplistic for testing with `intermediateDistributedStage`
-        assertThatThrownBy(() ->
-                assertThatQuery(deleteQuery)
-                        .withSetupQuery(setupQuery)
-                        .withCleanupQuery(cleanupQuery)
-                        .experiencing(TASK_FAILURE, Optional.of(ErrorType.INTERNAL_ERROR))
-                        .at(intermediateDistributedStage())
-                        .failsWithoutRetries(failure -> failure.hasMessageContaining(FAILURE_INJECTION_MESSAGE)))
-                .hasMessageContaining("stage not found");
-
         assertThatQuery(deleteQuery)
                 .withSetupQuery(setupQuery)
                 .withCleanupQuery(cleanupQuery)
                 .experiencing(TASK_MANAGEMENT_REQUEST_FAILURE)
-                .at(boundaryDistributedStage())
-                .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
-                .finishesSuccessfully();
-
-        assertThatQuery(deleteQuery)
-                .withSetupQuery(setupQuery)
-                .withCleanupQuery(cleanupQuery)
-                .experiencing(TASK_GET_RESULTS_REQUEST_FAILURE)
                 .at(boundaryDistributedStage())
                 .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
                 .finishesSuccessfully();
@@ -138,18 +118,28 @@ public abstract class BaseIcebergFailureRecoveryTest
                 .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
                 .finishesSuccessfully();
 
-        assertThatQuery(deleteQuery)
-                .withSetupQuery(setupQuery)
-                .withCleanupQuery(cleanupQuery)
-                .experiencing(TASK_GET_RESULTS_REQUEST_TIMEOUT)
-                .at(boundaryDistributedStage())
-                .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
-                .finishesSuccessfully();
+        if (getRetryPolicy() == RetryPolicy.QUERY) {
+            assertThatQuery(deleteQuery)
+                    .withSetupQuery(setupQuery)
+                    .withCleanupQuery(cleanupQuery)
+                    .experiencing(TASK_GET_RESULTS_REQUEST_FAILURE)
+                    .at(boundaryDistributedStage())
+                    .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
+                    .finishesSuccessfully();
+
+            assertThatQuery(deleteQuery)
+                    .withSetupQuery(setupQuery)
+                    .withCleanupQuery(cleanupQuery)
+                    .experiencing(TASK_GET_RESULTS_REQUEST_TIMEOUT)
+                    .at(boundaryDistributedStage())
+                    .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
+                    .finishesSuccessfully();
+        }
     }
 
     // Copied from BaseDeltaFailureRecoveryTest
     @Override
-    public void testUpdate()
+    protected void testUpdate()
     {
         // Test method is overriden because method from superclass assumes more complex plan for `UPDATE` query.
         // Assertions do not play well if plan consists of just two fragments.
@@ -188,28 +178,10 @@ public abstract class BaseIcebergFailureRecoveryTest
                 .failsWithoutRetries(failure -> failure.hasMessageContaining(FAILURE_INJECTION_MESSAGE))
                 .finishesSuccessfully();
 
-        // UPDATE plan is too simplistic for testing with `intermediateDistributedStage`
-        assertThatThrownBy(() ->
-                assertThatQuery(updateQuery)
-                        .withSetupQuery(setupQuery)
-                        .withCleanupQuery(cleanupQuery)
-                        .experiencing(TASK_FAILURE, Optional.of(ErrorType.INTERNAL_ERROR))
-                        .at(intermediateDistributedStage())
-                        .failsWithoutRetries(failure -> failure.hasMessageContaining(FAILURE_INJECTION_MESSAGE)))
-                .hasMessageContaining("stage not found");
-
         assertThatQuery(updateQuery)
                 .withSetupQuery(setupQuery)
                 .withCleanupQuery(cleanupQuery)
                 .experiencing(TASK_MANAGEMENT_REQUEST_FAILURE)
-                .at(boundaryDistributedStage())
-                .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
-                .finishesSuccessfully();
-
-        assertThatQuery(updateQuery)
-                .withSetupQuery(setupQuery)
-                .withCleanupQuery(cleanupQuery)
-                .experiencing(TASK_GET_RESULTS_REQUEST_FAILURE)
                 .at(boundaryDistributedStage())
                 .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
                 .finishesSuccessfully();
@@ -222,26 +194,26 @@ public abstract class BaseIcebergFailureRecoveryTest
                 .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
                 .finishesSuccessfully();
 
-        assertThatQuery(updateQuery)
-                .withSetupQuery(setupQuery)
-                .withCleanupQuery(cleanupQuery)
-                .experiencing(TASK_GET_RESULTS_REQUEST_TIMEOUT)
-                .at(boundaryDistributedStage())
-                .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
-                .finishesSuccessfully();
+        if (getRetryPolicy() == RetryPolicy.QUERY) {
+            assertThatQuery(updateQuery)
+                    .withSetupQuery(setupQuery)
+                    .withCleanupQuery(cleanupQuery)
+                    .experiencing(TASK_GET_RESULTS_REQUEST_FAILURE)
+                    .at(boundaryDistributedStage())
+                    .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Error 500 Internal Server Error|Error closing remote buffer, expected 204 got 500"))
+                    .finishesSuccessfully();
+
+            assertThatQuery(updateQuery)
+                    .withSetupQuery(setupQuery)
+                    .withCleanupQuery(cleanupQuery)
+                    .experiencing(TASK_GET_RESULTS_REQUEST_TIMEOUT)
+                    .at(boundaryDistributedStage())
+                    .failsWithoutRetries(failure -> failure.hasMessageFindingMatch("Encountered too many errors talking to a worker node|Error closing remote buffer"))
+                    .finishesSuccessfully();
+        }
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testCreatePartitionedTable()
-    {
-        testTableModification(
-                Optional.empty(),
-                "CREATE TABLE <table> WITH (partitioning = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders",
-                Optional.of("DROP TABLE <table>"));
-    }
-
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoNewPartition()
+    protected void testInsertIntoNewPartition()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioning = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders"),
@@ -249,12 +221,27 @@ public abstract class BaseIcebergFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoExistingPartition()
+    protected void testInsertIntoExistingPartition()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioning = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders"),
                 "INSERT INTO <table> SELECT *, 'partition1' p FROM orders",
+                Optional.of("DROP TABLE <table>"));
+    }
+
+    protected void testMergePartitionedTable()
+    {
+        testTableModification(
+                Optional.of("CREATE TABLE <table> WITH (partitioning = ARRAY['bucket(orderkey, 10)']) AS SELECT * FROM orders"),
+                """
+                        MERGE INTO <table> t
+                        USING (SELECT orderkey, 'X' clerk FROM <table>) s
+                        ON t.orderkey = s.orderkey
+                        WHEN MATCHED AND s.orderkey > 1000
+                            THEN UPDATE SET clerk = t.clerk || s.clerk
+                        WHEN MATCHED AND s.orderkey <= 1000
+                            THEN DELETE
+                        """,
                 Optional.of("DROP TABLE <table>"));
     }
 }

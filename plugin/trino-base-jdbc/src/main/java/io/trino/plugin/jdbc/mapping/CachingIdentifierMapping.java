@@ -18,6 +18,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
+import com.google.inject.Provider;
 import io.trino.collect.cache.NonKeyEvictableCache;
 import io.trino.plugin.jdbc.BaseJdbcClient;
 import io.trino.plugin.jdbc.mapping.IdentifierMappingModule.ForCachingIdentifierMapping;
@@ -25,8 +27,6 @@ import io.trino.spi.TrinoException;
 import io.trino.spi.security.ConnectorIdentity;
 
 import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Provider;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -62,7 +62,6 @@ public final class CachingIdentifierMapping
             @ForCachingIdentifierMapping IdentifierMapping identifierMapping,
             Provider<BaseJdbcClient> baseJdbcClient)
     {
-        requireNonNull(mappingConfig, "mappingConfig is null");
         CacheBuilder<Object, Object> remoteNamesCacheBuilder = CacheBuilder.newBuilder()
                 .expireAfterWrite(mappingConfig.getCaseInsensitiveNameMatchingCacheTtl().toMillis(), MILLISECONDS);
         this.remoteSchemaNames = buildNonEvictableCacheWithWeakInvalidateAll(remoteNamesCacheBuilder);

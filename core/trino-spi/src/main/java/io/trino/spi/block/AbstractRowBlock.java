@@ -20,6 +20,7 @@ import java.util.OptionalInt;
 
 import static io.trino.spi.block.BlockUtil.arraySame;
 import static io.trino.spi.block.BlockUtil.checkArrayRange;
+import static io.trino.spi.block.BlockUtil.checkReadablePosition;
 import static io.trino.spi.block.BlockUtil.checkValidPositions;
 import static io.trino.spi.block.BlockUtil.checkValidRegion;
 import static io.trino.spi.block.BlockUtil.compactArray;
@@ -51,7 +52,7 @@ public abstract class AbstractRowBlock
     protected abstract boolean[] getRowIsNull();
 
     // the offset in each field block, it can also be viewed as the "entry-based" offset in the RowBlock
-    protected final int getFieldBlockOffset(int position)
+    public final int getFieldBlockOffset(int position)
     {
         int[] offsets = getFieldBlockOffsets();
         return offsets != null ? offsets[position + getOffsetBase()] : position + getOffsetBase();
@@ -86,7 +87,7 @@ public abstract class AbstractRowBlock
             newRowIsNull = null;
             for (int i = 0; i < fieldBlockPositions.length; i++) {
                 int position = positions[offset + i];
-                checkReadablePosition(position);
+                checkReadablePosition(this, position);
                 fieldBlockPositions[i] = getFieldBlockOffset(position);
             }
             fieldBlockPositionCount = fieldBlockPositions.length;
@@ -98,12 +99,10 @@ public abstract class AbstractRowBlock
             for (int i = 0; i < length; i++) {
                 newOffsets[i] = fieldBlockPositionCount;
                 int position = positions[offset + i];
-                if (isNull(position)) {
-                    newRowIsNull[i] = true;
-                }
-                else {
-                    fieldBlockPositions[fieldBlockPositionCount++] = getFieldBlockOffset(position);
-                }
+                boolean positionIsNull = isNull(position);
+                newRowIsNull[i] = positionIsNull;
+                fieldBlockPositions[fieldBlockPositionCount] = getFieldBlockOffset(position);
+                fieldBlockPositionCount += positionIsNull ? 0 : 1;
             }
             // Record last offset position
             newOffsets[length] = fieldBlockPositionCount;
@@ -290,7 +289,7 @@ public abstract class AbstractRowBlock
         if (clazz != Block.class) {
             throw new IllegalArgumentException("clazz must be Block.class");
         }
-        checkReadablePosition(position);
+        checkReadablePosition(this, position);
 
         return clazz.cast(new SingleRowBlock(getFieldBlockOffset(position), getRawFieldBlocks()));
     }
@@ -298,7 +297,7 @@ public abstract class AbstractRowBlock
     @Override
     public Block getSingleValueBlock(int position)
     {
-        checkReadablePosition(position);
+        checkReadablePosition(this, position);
 
         int startFieldBlockOffset = getFieldBlockOffset(position);
         int endFieldBlockOffset = getFieldBlockOffset(position + 1);
@@ -316,7 +315,7 @@ public abstract class AbstractRowBlock
     @Override
     public long getEstimatedDataSizeForStats(int position)
     {
-        checkReadablePosition(position);
+        checkReadablePosition(this, position);
 
         if (isNull(position)) {
             return 0;
@@ -333,15 +332,8 @@ public abstract class AbstractRowBlock
     @Override
     public boolean isNull(int position)
     {
-        checkReadablePosition(position);
+        checkReadablePosition(this, position);
         boolean[] rowIsNull = getRowIsNull();
         return rowIsNull != null && rowIsNull[position + getOffsetBase()];
-    }
-
-    private void checkReadablePosition(int position)
-    {
-        if (position < 0 || position >= getPositionCount()) {
-            throw new IllegalArgumentException("position is not valid");
-        }
     }
 }

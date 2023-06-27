@@ -15,13 +15,17 @@ package io.trino.plugin.raptor.legacy;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Maps;
 import io.airlift.log.Logger;
 import io.trino.Session;
-import io.trino.connector.CatalogName;
+import io.trino.SystemSessionProperties;
+import io.trino.connector.CatalogServiceProvider;
 import io.trino.metadata.QualifiedObjectName;
 import io.trino.metadata.SessionPropertyManager;
 import io.trino.plugin.raptor.legacy.storage.StorageManagerConfig;
 import io.trino.plugin.tpch.TpchPlugin;
+import io.trino.spi.session.PropertyMetadata;
 import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
 import io.trino.tpch.TpchTable;
@@ -35,6 +39,7 @@ import java.util.Map.Entry;
 import static io.airlift.units.Duration.nanosSince;
 import static io.trino.plugin.tpch.TpchMetadata.TINY_SCHEMA_NAME;
 import static io.trino.testing.QueryAssertions.copyTpchTables;
+import static io.trino.testing.TestingHandles.createTestCatalogHandle;
 import static io.trino.testing.TestingSession.testSessionBuilder;
 import static java.lang.String.format;
 
@@ -70,7 +75,7 @@ public final class RaptorQueryRunner
                 .put("backup.directory", new File(baseDir, "backup").getAbsolutePath())
                 .buildOrThrow();
 
-        queryRunner.createCatalog("raptor", "raptor-legacy", raptorProperties);
+        queryRunner.createCatalog("raptor", "raptor_legacy", raptorProperties);
 
         copyTables(queryRunner, "tpch", createSession(), bucketed, tablesToLoad);
 
@@ -146,8 +151,11 @@ public final class RaptorQueryRunner
 
     public static Session createSession(String schema)
     {
-        SessionPropertyManager sessionPropertyManager = new SessionPropertyManager();
-        sessionPropertyManager.addConnectorSessionProperties(new CatalogName("raptor"), new RaptorSessionProperties(new StorageManagerConfig()).getSessionProperties());
+        SessionPropertyManager sessionPropertyManager = new SessionPropertyManager(
+                ImmutableSet.of(new SystemSessionProperties()),
+                CatalogServiceProvider.singleton(
+                        createTestCatalogHandle("raptor"),
+                        Maps.uniqueIndex(new RaptorSessionProperties(new StorageManagerConfig()).getSessionProperties(), PropertyMetadata::getName)));
         return testSessionBuilder(sessionPropertyManager)
                 .setCatalog("raptor")
                 .setSchema(schema)

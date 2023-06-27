@@ -15,6 +15,7 @@ package io.trino.connector.system;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 import io.airlift.log.Logger;
 import io.trino.FullConnectorSession;
 import io.trino.Session;
@@ -34,8 +35,6 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SystemTable;
 import io.trino.spi.predicate.TupleDomain;
 
-import javax.inject.Inject;
-
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -45,7 +44,7 @@ import static io.trino.connector.system.jdbc.FilterUtil.tablePrefix;
 import static io.trino.connector.system.jdbc.FilterUtil.tryGetSingleVarcharValue;
 import static io.trino.metadata.MetadataListing.getMaterializedViews;
 import static io.trino.metadata.MetadataListing.getViews;
-import static io.trino.metadata.MetadataListing.listCatalogs;
+import static io.trino.metadata.MetadataListing.listCatalogNames;
 import static io.trino.metadata.MetadataListing.listTables;
 import static io.trino.metadata.MetadataUtil.TableMetadataBuilder.tableMetadataBuilder;
 import static io.trino.spi.connector.SystemTable.Distribution.SINGLE_COORDINATOR;
@@ -98,7 +97,7 @@ public class TableCommentSystemTable
         Session session = ((FullConnectorSession) connectorSession).getSession();
         Builder table = InMemoryRecordSet.builder(COMMENT_TABLE);
 
-        for (String catalog : listCatalogs(session, metadata, accessControl, catalogFilter).keySet()) {
+        for (String catalog : listCatalogNames(session, metadata, accessControl, catalogFilter)) {
             QualifiedTablePrefix prefix = tablePrefix(catalog, schemaFilter, tableFilter);
 
             Set<SchemaTableName> names = ImmutableSet.of();

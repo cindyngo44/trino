@@ -74,9 +74,6 @@ final class TrinoSystemRequirements
             if (!ImmutableSet.of("amd64", "aarch64", "ppc64le").contains(osArch)) {
                 failRequirement("Trino requires amd64, aarch64, or ppc64le on Linux (found %s)", osArch);
             }
-            if ("aarch64".equals(osArch)) {
-                warnRequirement("Support for the ARM architecture is experimental");
-            }
             else if ("ppc64le".equals(osArch)) {
                 warnRequirement("Support for the POWER architecture is experimental");
             }
@@ -93,7 +90,8 @@ final class TrinoSystemRequirements
 
     private static void verifyJavaVersion()
     {
-        Version required = Version.parse("11.0.11");
+        Version required = Version.parse("17.0.3");
+
         if (Runtime.version().compareTo(required) < 0) {
             failRequirement("Trino requires Java %s at minimum (found %s)", required, Runtime.version());
         }

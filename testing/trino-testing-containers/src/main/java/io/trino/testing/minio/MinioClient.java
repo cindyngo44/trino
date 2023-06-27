@@ -23,10 +23,13 @@ import com.google.common.util.concurrent.MoreExecutors;
 import io.airlift.log.Logger;
 import io.minio.BucketExistsArgs;
 import io.minio.CloseableIterator;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
 import io.minio.ListObjectsArgs;
 import io.minio.ListenBucketNotificationArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
 import io.minio.Result;
 import io.minio.messages.Event;
 import io.minio.messages.NotificationRecords;
@@ -202,6 +205,36 @@ public class MinioClient
                                 .stream(inputStream, byteSource.size(), -1)
                                 .build());
             }
+        }
+        catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void copyObject(String sourceBucket, String sourceKey, String targetBucket, String targetKey)
+    {
+        try {
+            client.copyObject(CopyObjectArgs.builder()
+                    .source(CopySource.builder()
+                            .bucket(sourceBucket)
+                            .object(sourceKey)
+                            .build())
+                    .bucket(targetBucket)
+                    .object(targetKey)
+                    .build());
+        }
+        catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public void removeObject(String bucket, String key)
+    {
+        try {
+            client.removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(key)
+                    .build());
         }
         catch (Exception e) {
             throw new RuntimeException(e);

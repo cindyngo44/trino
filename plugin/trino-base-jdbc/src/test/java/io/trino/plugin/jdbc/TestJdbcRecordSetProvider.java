@@ -43,12 +43,10 @@ import static com.google.common.util.concurrent.MoreExecutors.newDirectExecutorS
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.airlift.testing.Closeables.closeAll;
-import static io.trino.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.spi.type.VarcharType.createVarcharType;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertNotNull;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestJdbcRecordSetProvider
 {
@@ -91,6 +89,8 @@ public class TestJdbcRecordSetProvider
         closeAll(
                 database,
                 () -> executor.shutdownNow());
+        database = null;
+        executor = null;
     }
 
     @Test
@@ -99,17 +99,17 @@ public class TestJdbcRecordSetProvider
         ConnectorTransactionHandle transaction = new JdbcTransactionHandle();
         JdbcRecordSetProvider recordSetProvider = new JdbcRecordSetProvider(jdbcClient, executor);
         RecordSet recordSet = recordSetProvider.getRecordSet(transaction, SESSION, split, table, ImmutableList.of(textColumn, textShortColumn, valueColumn));
-        assertNotNull(recordSet, "recordSet is null");
+        assertThat(recordSet).withFailMessage("recordSet is null").isNotNull();
 
         RecordCursor cursor = recordSet.cursor();
-        assertNotNull(cursor, "cursor is null");
+        assertThat(cursor).withFailMessage("cursor is null").isNotNull();
 
         Map<String, Long> data = new LinkedHashMap<>();
         while (cursor.advanceNextPosition()) {
             data.put(cursor.getSlice(0).toStringUtf8(), cursor.getLong(2));
-            assertEquals(cursor.getSlice(0), cursor.getSlice(1));
+            assertThat(cursor.getSlice(0)).isEqualTo(cursor.getSlice(1));
         }
-        assertEquals(data, ImmutableMap.<String, Long>builder()
+        assertThat(data).isEqualTo(ImmutableMap.<String, Long>builder()
                 .put("one", 1L)
                 .put("two", 2L)
                 .put("three", 3L)
@@ -200,10 +200,11 @@ public class TestJdbcRecordSetProvider
                 OptionalLong.empty(),
                 Optional.empty(),
                 jdbcTableHandle.getOtherReferencedTables(),
-                jdbcTableHandle.getNextSyntheticColumnId());
+                jdbcTableHandle.getNextSyntheticColumnId(),
+                Optional.empty());
 
         ConnectorSplitSource splits = jdbcClient.getSplits(SESSION, jdbcTableHandle);
-        JdbcSplit split = (JdbcSplit) getOnlyElement(getFutureValue(splits.getNextBatch(NOT_PARTITIONED, 1000)).getSplits());
+        JdbcSplit split = (JdbcSplit) getOnlyElement(getFutureValue(splits.getNextBatch(1000)).getSplits());
 
         ConnectorTransactionHandle transaction = new JdbcTransactionHandle();
         JdbcRecordSetProvider recordSetProvider = new JdbcRecordSetProvider(jdbcClient, executor);

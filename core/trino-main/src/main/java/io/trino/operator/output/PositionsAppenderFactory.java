@@ -13,9 +13,10 @@
  */
 package io.trino.operator.output;
 
+import io.trino.spi.block.Fixed12Block;
 import io.trino.spi.block.Int128ArrayBlock;
-import io.trino.spi.block.Int96ArrayBlock;
 import io.trino.spi.type.FixedWidthType;
+import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
 import io.trino.spi.type.VariableWidthType;
 import io.trino.type.BlockTypeOperators;
@@ -39,7 +40,7 @@ public class PositionsAppenderFactory
 
         return new UnnestingPositionsAppender(
                 new RleAwarePositionsAppender(
-                        blockTypeOperators.getEqualOperator(type),
+                        blockTypeOperators.getDistinctFromOperator(type),
                         createPrimitiveAppender(type, expectedPositions, maxPageSizeInBytes)));
     }
 
@@ -55,8 +56,8 @@ public class PositionsAppenderFactory
                     return new IntPositionsAppender(expectedPositions);
                 case Long.BYTES:
                     return new LongPositionsAppender(expectedPositions);
-                case Int96ArrayBlock.INT96_BYTES:
-                    return new Int96PositionsAppender(expectedPositions);
+                case Fixed12Block.FIXED12_BYTES:
+                    return new Fixed12PositionsAppender(expectedPositions);
                 case Int128ArrayBlock.INT128_BYTES:
                     return new Int128PositionsAppender(expectedPositions);
                 default:
@@ -65,6 +66,9 @@ public class PositionsAppenderFactory
         }
         else if (type instanceof VariableWidthType) {
             return new SlicePositionsAppender(expectedPositions, maxPageSizeInBytes);
+        }
+        else if (type instanceof RowType) {
+            return RowPositionsAppender.createRowAppender(this, (RowType) type, expectedPositions, maxPageSizeInBytes);
         }
 
         return new TypedPositionsAppender(type, expectedPositions);

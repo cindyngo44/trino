@@ -16,10 +16,10 @@ package io.trino.plugin.deltalake;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Resources;
-import io.trino.plugin.deltalake.util.DockerizedDataLake;
-import io.trino.plugin.deltalake.util.TestingHadoop;
+import io.trino.plugin.hive.containers.HiveHadoop;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
+import org.testcontainers.containers.Network;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Parameters;
@@ -31,11 +31,11 @@ import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import static io.trino.plugin.deltalake.DeltaLakeQueryRunner.DELTA_CATALOG;
 import static io.trino.plugin.deltalake.DeltaLakeQueryRunner.createAbfsDeltaLakeQueryRunner;
+import static io.trino.testing.containers.TestContainers.getPathFromClassPathResource;
 import static io.trino.tpch.TpchTable.CUSTOMER;
 import static io.trino.tpch.TpchTable.NATION;
 import static io.trino.tpch.TpchTable.REGION;
@@ -54,10 +54,9 @@ public class TestDeltaLakeAdlsStorage
     private final String account;
     private final String accessKey;
 
-    private String adlsDirectory;
+    private final String adlsDirectory;
 
-    private DockerizedDataLake dockerizedDataLake;
-    private TestingHadoop testingHadoop;
+    private HiveHadoop hiveHadoop;
 
     @Parameters({
             "hive.hadoop2.azure-abfs-container",
@@ -78,13 +77,20 @@ public class TestDeltaLakeAdlsStorage
             throws Exception
     {
         Path hadoopCoreSiteXmlTempFile = createHadoopCoreSiteXmlTempFileWithAbfsSettings();
-        dockerizedDataLake = closeAfterClass(new DockerizedDataLake(
-                Optional.of(HADOOP_BASE_IMAGE),
-                ImmutableMap.of("io/trino/plugin/deltalake/testing/resources/databricks", "/tmp/tpch-tiny"),
-                ImmutableMap.of(hadoopCoreSiteXmlTempFile.toString(), "/etc/hadoop/conf/core-site.xml")));
-        testingHadoop = dockerizedDataLake.getTestingHadoop();
-
-        return createAbfsDeltaLakeQueryRunner(DELTA_CATALOG, SCHEMA_NAME, ImmutableMap.of(), ImmutableMap.of(), testingHadoop);
+        hiveHadoop = closeAfterClass(HiveHadoop.builder()
+                .withNetwork(Network.newNetwork())
+                .withImage(HADOOP_BASE_IMAGE)
+                .withFilesToMount(ImmutableMap.of(
+                        "/tmp/tpch-tiny", getPathFromClassPathResource("io/trino/plugin/deltalake/testing/resources/databricks"),
+                        "/etc/hadoop/conf/core-site.xml", hadoopCoreSiteXmlTempFile.toString()))
+                .build());
+        hiveHadoop.start();
+        return createAbfsDeltaLakeQueryRunner(
+                DELTA_CATALOG,
+                SCHEMA_NAME,
+                ImmutableMap.of(),
+                ImmutableMap.of("delta.register-table-procedure.enabled", "true"),
+                hiveHadoop);
     }
 
     private Path createHadoopCoreSiteXmlTempFileWithAbfsSettings()
@@ -97,7 +103,7 @@ public class TestDeltaLakeAdlsStorage
         FileAttribute<Set<PosixFilePermission>> posixFilePermissions = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-r--r--"));
         Path coreSiteXml = Files.createTempFile("core-site", ".xml", posixFilePermissions);
         coreSiteXml.toFile().deleteOnExit();
-        Files.write(coreSiteXml, abfsSpecificCoreSiteXmlContent.getBytes(UTF_8));
+        Files.writeString(coreSiteXml, abfsSpecificCoreSiteXmlContent);
 
         return coreSiteXml;
     }
@@ -105,23 +111,18 @@ public class TestDeltaLakeAdlsStorage
     @BeforeClass(alwaysRun = true)
     public void setUp()
     {
-        testingHadoop.runCommandInContainer("hadoop", "fs", "-mkdir", "-p", adlsDirectory);
+        hiveHadoop.executeInContainerFailOnError("hadoop", "fs", "-mkdir", "-p", adlsDirectory);
         TABLES.forEach(table -> {
-            testingHadoop.runCommandInContainer("hadoop", "fs", "-copyFromLocal", "-f", "/tmp/tpch-tiny/" + table, adlsDirectory);
-            getQueryRunner().execute(format("CREATE TABLE %s.%s.%s (dummy int) WITH (location = '%s/%s')",
-                    DELTA_CATALOG,
-                    SCHEMA_NAME,
-                    table,
-                    adlsDirectory,
-                    table));
+            hiveHadoop.executeInContainerFailOnError("hadoop", "fs", "-copyFromLocal", "-f", "/tmp/tpch-tiny/" + table, adlsDirectory);
+            getQueryRunner().execute(format("CALL system.register_table('%s', '%s', '%s/%s')", SCHEMA_NAME, table, adlsDirectory, table));
         });
     }
 
     @AfterClass(alwaysRun = true)
     public void tearDown()
     {
-        if (adlsDirectory != null && testingHadoop != null) {
-            testingHadoop.runCommandInContainer("hadoop", "fs", "-rm", "-f", "-r", adlsDirectory);
+        if (adlsDirectory != null && hiveHadoop != null) {
+            hiveHadoop.executeInContainerFailOnError("hadoop", "fs", "-rm", "-f", "-r", adlsDirectory);
         }
     }
 

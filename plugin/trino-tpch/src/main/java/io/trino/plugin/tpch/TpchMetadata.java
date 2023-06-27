@@ -29,6 +29,7 @@ import io.trino.plugin.tpch.statistics.TableStatisticsDataRepository;
 import io.trino.spi.connector.CatalogSchemaTableName;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
+import io.trino.spi.connector.ConnectorAnalyzeMetadata;
 import io.trino.spi.connector.ConnectorMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableHandle;
@@ -201,12 +202,6 @@ public class TpchMetadata
         return new TpchTableHandle(tableName.getSchemaName(), tableName.getTableName(), scaleFactor);
     }
 
-    @Override
-    public ConnectorTableHandle getTableHandleForStatisticsCollection(ConnectorSession session, SchemaTableName tableName, Map<String, Object> analyzeProperties)
-    {
-        return getTableHandle(session, tableName);
-    }
-
     private Set<NullableValue> filterValues(Set<NullableValue> nullableValues, TpchColumn<?> column, Constraint constraint)
     {
         return nullableValues.stream()
@@ -293,21 +288,19 @@ public class TpchMetadata
         if (constraintSummary.isAll()) {
             return emptyMap();
         }
-        else if (constraintSummary.isNone()) {
+        if (constraintSummary.isNone()) {
             Set<TpchColumn<?>> columns = ImmutableSet.copyOf(tpchTable.getColumns());
             return asMap(columns, key -> emptyList());
         }
-        else {
-            Map<ColumnHandle, Domain> domains = constraintSummary.getDomains().orElseThrow();
-            Optional<Domain> orderStatusDomain = Optional.ofNullable(domains.get(toColumnHandle(OrderColumn.ORDER_STATUS)));
-            Optional<Map<TpchColumn<?>, List<Object>>> allowedColumnValues = orderStatusDomain.map(domain -> {
-                List<Object> allowedValues = ORDER_STATUS_VALUES.stream()
-                        .filter(domain::includesNullableValue)
-                        .collect(toList());
-                return avoidTrivialOrderStatusRestriction(allowedValues);
-            });
-            return allowedColumnValues.orElse(emptyMap());
-        }
+        Map<ColumnHandle, Domain> domains = constraintSummary.getDomains().orElseThrow();
+        Optional<Domain> orderStatusDomain = Optional.ofNullable(domains.get(toColumnHandle(OrderColumn.ORDER_STATUS)));
+        Optional<Map<TpchColumn<?>, List<Object>>> allowedColumnValues = orderStatusDomain.map(domain -> {
+            List<Object> allowedValues = ORDER_STATUS_VALUES.stream()
+                    .filter(domain::includesNullableValue)
+                    .collect(toList());
+            return avoidTrivialOrderStatusRestriction(allowedValues);
+        });
+        return allowedColumnValues.orElse(emptyMap());
     }
 
     private static Map<TpchColumn<?>, List<Object>> avoidTrivialOrderStatusRestriction(List<Object> allowedValues)
@@ -315,9 +308,7 @@ public class TpchMetadata
         if (allowedValues.containsAll(ORDER_STATUS_VALUES)) {
             return emptyMap();
         }
-        else {
-            return ImmutableMap.of(OrderColumn.ORDER_STATUS, allowedValues);
-        }
+        return ImmutableMap.of(OrderColumn.ORDER_STATUS, allowedValues);
     }
 
     private TableStatistics toTableStatistics(TableStatisticsData tableStatisticsData, TpchTableHandle tpchTableHandle, Map<String, ColumnHandle> columnHandles)
@@ -375,9 +366,9 @@ public class TpchMetadata
     }
 
     @Override
-    public TableStatisticsMetadata getStatisticsCollectionMetadata(ConnectorSession session, ConnectorTableMetadata tableMetadata)
+    public ConnectorAnalyzeMetadata getStatisticsCollectionMetadata(ConnectorSession session, ConnectorTableHandle tableHandle, Map<String, Object> analyzeProperties)
     {
-        return new TableStatisticsMetadata(ImmutableSet.of(), ImmutableSet.of(ROW_COUNT), ImmutableList.of());
+        return new ConnectorAnalyzeMetadata(tableHandle, new TableStatisticsMetadata(ImmutableSet.of(), ImmutableSet.of(ROW_COUNT), ImmutableList.of()));
     }
 
     @Override
@@ -431,7 +422,6 @@ public class TpchMetadata
         TpchTableHandle tableHandle = (TpchTableHandle) table;
 
         Optional<ConnectorTablePartitioning> tablePartitioning = Optional.empty();
-        Optional<Set<ColumnHandle>> partitioningColumns = Optional.empty();
         List<LocalProperty<ColumnHandle>> localProperties = ImmutableList.of();
 
         Map<String, ColumnHandle> columns = getColumnHandles(session, tableHandle);
@@ -441,8 +431,8 @@ public class TpchMetadata
                     new TpchPartitioningHandle(
                             TpchTable.ORDERS.getTableName(),
                             calculateTotalRows(OrderGenerator.SCALE_BASE, tableHandle.getScaleFactor())),
-                    ImmutableList.of(orderKeyColumn)));
-            partitioningColumns = Optional.of(ImmutableSet.of(orderKeyColumn));
+                    ImmutableList.of(orderKeyColumn),
+                    true));
             localProperties = ImmutableList.of(new SortingProperty<>(orderKeyColumn, SortOrder.ASC_NULLS_FIRST));
         }
         else if (partitioningEnabled && tableHandle.getTableName().equals(TpchTable.LINE_ITEM.getTableName())) {
@@ -451,8 +441,8 @@ public class TpchMetadata
                     new TpchPartitioningHandle(
                             TpchTable.ORDERS.getTableName(),
                             calculateTotalRows(OrderGenerator.SCALE_BASE, tableHandle.getScaleFactor())),
-                    ImmutableList.of(orderKeyColumn)));
-            partitioningColumns = Optional.of(ImmutableSet.of(orderKeyColumn));
+                    ImmutableList.of(orderKeyColumn),
+                    true));
             localProperties = ImmutableList.of(
                     new SortingProperty<>(orderKeyColumn, SortOrder.ASC_NULLS_FIRST),
                     new SortingProperty<>(columns.get(columnNaming.getName(LineItemColumn.LINE_NUMBER)), SortOrder.ASC_NULLS_FIRST));
@@ -475,7 +465,6 @@ public class TpchMetadata
         return new ConnectorTableProperties(
                 constraint,
                 tablePartitioning,
-                partitioningColumns,
                 Optional.empty(),
                 localProperties);
     }
@@ -548,7 +537,7 @@ public class TpchMetadata
                     return entry.getValue().stream()
                             .map(nullableValue -> Domain.singleValue(type, nullableValue.getValue()))
                             .reduce((Domain::union))
-                            .orElse(Domain.none(type));
+                            .orElseGet(() -> Domain.none(type));
                 })));
     }
 

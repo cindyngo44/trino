@@ -40,6 +40,7 @@ public final class RedisTestUtils
     {
         queryRunner.installPlugin(new TestingRedisPlugin(tableDescriptions));
 
+        // note: additional copy via ImmutableList so that if fails on nulls
         connectorProperties = new HashMap<>(ImmutableMap.copyOf(connectorProperties));
         connectorProperties.putIfAbsent("redis.nodes", redisServer.getHostAndPort().toString());
         connectorProperties.putIfAbsent("redis.table-names", Joiner.on(",").join(tableDescriptions.keySet()));
@@ -76,14 +77,21 @@ public final class RedisTestUtils
         return new AbstractMap.SimpleImmutableEntry<>(schemaTableName, tableDescription);
     }
 
-    public static Map.Entry<SchemaTableName, RedisTableDescription> createEmptyTableDescription(SchemaTableName schemaTableName)
+    public static Map.Entry<SchemaTableName, RedisTableDescription> createTableDescription(RedisTableDescription tableDescription)
     {
-        RedisTableDescription tableDescription = new RedisTableDescription(
-                schemaTableName.getTableName(),
-                schemaTableName.getSchemaName(),
-                null,
-                null);
+        SchemaTableName schemaTableName = new SchemaTableName(
+                tableDescription.getSchemaName(),
+                tableDescription.getTableName());
 
         return new AbstractMap.SimpleImmutableEntry<>(schemaTableName, tableDescription);
+    }
+
+    public static RedisTableDescription loadSimpleTableDescription(QueryRunner queryRunner, String valueDataFormat)
+            throws Exception
+    {
+        JsonCodec<RedisTableDescription> tableDescriptionJsonCodec = new CodecSupplier<>(RedisTableDescription.class, queryRunner.getTypeManager()).get();
+        try (InputStream data = RedisTestUtils.class.getResourceAsStream(format("/simple/%s_value_table.json", valueDataFormat))) {
+            return tableDescriptionJsonCodec.fromJson(ByteStreams.toByteArray(data));
+        }
     }
 }

@@ -50,6 +50,7 @@ public class OAuth2Config
     private Duration maxClockSkew = new Duration(1, TimeUnit.MINUTES);
     private Optional<String> userMappingPattern = Optional.empty();
     private Optional<File> userMappingFile = Optional.empty();
+    private boolean enableRefreshTokens;
     private boolean enableDiscovery = true;
 
     public Optional<String> getStateKey()
@@ -156,8 +157,8 @@ public class OAuth2Config
         return groupsField;
     }
 
-    @Config("http-server.authentication.oauth2.groups-field")
-    @ConfigDescription("Groups field in the claim")
+    @Config("deprecated.http-server.authentication.oauth2.groups-field")
+    @ConfigDescription("Groups field in the claim. This configuration is scheduled for removal.")
     public OAuth2Config setGroupsField(String groupsField)
     {
         this.groupsField = Optional.ofNullable(groupsField);
@@ -217,6 +218,19 @@ public class OAuth2Config
     public OAuth2Config setUserMappingFile(File userMappingFile)
     {
         this.userMappingFile = Optional.ofNullable(userMappingFile);
+        return this;
+    }
+
+    public boolean isEnableRefreshTokens()
+    {
+        return enableRefreshTokens;
+    }
+
+    @Config("http-server.authentication.oauth2.refresh-tokens")
+    @ConfigDescription("Enables OpenID refresh tokens usage")
+    public OAuth2Config setEnableRefreshTokens(boolean enableRefreshTokens)
+    {
+        this.enableRefreshTokens = enableRefreshTokens;
         return this;
     }
 

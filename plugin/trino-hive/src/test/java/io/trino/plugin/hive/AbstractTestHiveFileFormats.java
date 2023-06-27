@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
+import io.trino.filesystem.Location;
 import io.trino.plugin.hive.metastore.StorageFormat;
 import io.trino.spi.Page;
 import io.trino.spi.PageBuilder;
@@ -40,7 +41,6 @@ import io.trino.spi.type.Type;
 import io.trino.spi.type.VarcharType;
 import io.trino.testing.MaterializedResult;
 import io.trino.testing.MaterializedRow;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.common.type.Date;
 import org.apache.hadoop.hive.common.type.HiveChar;
@@ -64,7 +64,6 @@ import org.apache.hadoop.mapred.JobConf;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 import org.joda.time.format.DateTimeFormat;
-import org.testng.annotations.Test;
 
 import java.io.File;
 import java.io.IOException;
@@ -85,6 +84,7 @@ import java.util.stream.Collectors;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableMap.toImmutableMap;
+import static io.trino.hadoop.ConfigurationInstantiator.newEmptyConfiguration;
 import static io.trino.plugin.hive.HiveColumnHandle.ColumnType.PARTITION_KEY;
 import static io.trino.plugin.hive.HiveColumnHandle.ColumnType.REGULAR;
 import static io.trino.plugin.hive.HiveColumnHandle.createBaseColumn;
@@ -146,7 +146,6 @@ import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
-@Test(groups = "hive")
 public abstract class AbstractTestHiveFileFormats
 {
     protected static final DateTimeZone HIVE_STORAGE_TIME_ZONE = DateTimeZone.forID("America/Bahia_Banderas");
@@ -267,7 +266,7 @@ public abstract class AbstractTestHiveFileFormats
             .add(new TestColumn("t_empty_varchar", javaHiveVarcharObjectInspector, new HiveVarchar("", HiveVarchar.MAX_VARCHAR_LENGTH), Slices.EMPTY_SLICE))
             .add(new TestColumn("t_varchar", javaHiveVarcharObjectInspector, new HiveVarchar("test", HiveVarchar.MAX_VARCHAR_LENGTH), Slices.utf8Slice("test")))
             .add(new TestColumn("t_varchar_max_length", javaHiveVarcharObjectInspector, new HiveVarchar(VARCHAR_MAX_LENGTH_STRING, HiveVarchar.MAX_VARCHAR_LENGTH), Slices.utf8Slice(VARCHAR_MAX_LENGTH_STRING)))
-            .add(new TestColumn("t_char", CHAR_INSPECTOR_LENGTH_10, "test", Slices.utf8Slice("test"), true))
+            .add(new TestColumn("t_char", CHAR_INSPECTOR_LENGTH_10, "test", Slices.utf8Slice("test")))
             .add(new TestColumn("t_tinyint", javaByteObjectInspector, (byte) 1, (byte) 1))
             .add(new TestColumn("t_smallint", javaShortObjectInspector, (short) 2, (short) 2))
             .add(new TestColumn("t_int", javaIntObjectInspector, 3, 3))
@@ -562,9 +561,6 @@ public abstract class AbstractTestHiveFileFormats
         }
         Page page = pageBuilder.build();
 
-        JobConf jobConf = new JobConf();
-        configureCompression(jobConf, compressionCodec);
-
         Properties tableProperties = new Properties();
         tableProperties.setProperty(
                 "columns",
@@ -579,13 +575,13 @@ public abstract class AbstractTestHiveFileFormats
                         .collect(Collectors.joining(",")));
 
         Optional<FileWriter> fileWriter = fileWriterFactory.createFileWriter(
-                new Path(filePath),
+                Location.of(filePath),
                 testColumns.stream()
                         .map(TestColumn::getName)
                         .collect(toList()),
                 StorageFormat.fromHiveStorageFormat(storageFormat),
+                compressionCodec,
                 tableProperties,
-                jobConf,
                 session,
                 OptionalInt.empty(),
                 NO_ACID_TRANSACTION,
@@ -626,9 +622,9 @@ public abstract class AbstractTestHiveFileFormats
                 testColumns.stream()
                         .map(TestColumn::getType)
                         .collect(Collectors.joining(",")));
-        serializer.initialize(new Configuration(false), tableProperties);
+        serializer.initialize(newEmptyConfiguration(), tableProperties);
 
-        JobConf jobConf = new JobConf();
+        JobConf jobConf = new JobConf(newEmptyConfiguration());
         configureCompression(jobConf, compressionCodec);
 
         RecordWriter recordWriter = outputFormat.getHiveRecordWriter(
@@ -640,7 +636,7 @@ public abstract class AbstractTestHiveFileFormats
                 () -> {});
 
         try {
-            serializer.initialize(new Configuration(false), tableProperties);
+            serializer.initialize(newEmptyConfiguration(), tableProperties);
 
             SettableStructObjectInspector objectInspector = getStandardStructObjectInspector(
                     testColumns.stream()
@@ -673,7 +669,7 @@ public abstract class AbstractTestHiveFileFormats
 
         // todo to test with compression, the file must be renamed with the compression extension
         Path path = new Path(filePath);
-        path.getFileSystem(new Configuration(false)).setVerifyChecksum(true);
+        path.getFileSystem(newEmptyConfiguration()).setVerifyChecksum(true);
         File file = new File(filePath);
         return new FileSplit(path, 0, file.length(), new String[0]);
     }
@@ -722,14 +718,11 @@ public abstract class AbstractTestHiveFileFormats
         if (isStructuralType(type)) {
             return cursor.getObject(field);
         }
-        if (type instanceof DecimalType) {
-            DecimalType decimalType = (DecimalType) type;
+        if (type instanceof DecimalType decimalType) {
             if (decimalType.isShort()) {
                 return BigInteger.valueOf(cursor.getLong(field));
             }
-            else {
-                return ((Int128) cursor.getObject(field)).toBigInteger();
-            }
+            return ((Int128) cursor.getObject(field)).toBigInteger();
         }
         throw new RuntimeException("unknown type");
     }
@@ -754,8 +747,7 @@ public abstract class AbstractTestHiveFileFormats
                 if (fieldFromCursor == null) {
                     assertEquals(null, testColumn.getExpectedValue(), "Expected null for column " + testColumn.getName());
                 }
-                else if (type instanceof DecimalType) {
-                    DecimalType decimalType = (DecimalType) type;
+                else if (type instanceof DecimalType decimalType) {
                     fieldFromCursor = new BigDecimal((BigInteger) fieldFromCursor, decimalType.getScale());
                     assertEquals(fieldFromCursor, testColumn.getExpectedValue(), "Wrong value for column " + testColumn.getName());
                 }

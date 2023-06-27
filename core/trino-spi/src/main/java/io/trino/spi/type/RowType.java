@@ -109,11 +109,11 @@ public class RowType
     private final boolean comparable;
     private final boolean orderable;
 
-    private RowType(TypeSignature typeSignature, List<Field> fields)
+    private RowType(TypeSignature typeSignature, List<Field> originalFields)
     {
         super(typeSignature, Block.class);
 
-        this.fields = fields;
+        this.fields = List.copyOf(originalFields);
         this.fieldTypes = fields.stream()
                 .map(Field::getType)
                 .collect(toUnmodifiableList());
@@ -178,13 +178,13 @@ public class RowType
     }
 
     @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries, int expectedBytesPerEntry)
+    public RowBlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries, int expectedBytesPerEntry)
     {
         return new RowBlockBuilder(getTypeParameters(), blockBuilderStatus, expectedEntries);
     }
 
     @Override
-    public BlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries)
+    public RowBlockBuilder createBlockBuilder(BlockBuilderStatus blockBuilderStatus, int expectedEntries)
     {
         return new RowBlockBuilder(getTypeParameters(), blockBuilderStatus, expectedEntries);
     }
@@ -249,13 +249,11 @@ public class RowType
     public void writeObject(BlockBuilder blockBuilder, Object value)
     {
         Block rowBlock = (Block) value;
-
-        BlockBuilder entryBuilder = blockBuilder.beginBlockEntry();
-        for (int i = 0; i < rowBlock.getPositionCount(); i++) {
-            fields.get(i).getType().appendTo(rowBlock, i, entryBuilder);
-        }
-
-        blockBuilder.closeEntry();
+        ((RowBlockBuilder) blockBuilder).buildEntry(fieldBuilders -> {
+            for (int i = 0; i < rowBlock.getPositionCount(); i++) {
+                fields.get(i).getType().appendTo(rowBlock, i, fieldBuilders.get(i));
+            }
+        });
     }
 
     @Override

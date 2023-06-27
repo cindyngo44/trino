@@ -25,10 +25,8 @@ import io.trino.spi.metrics.Count;
 import io.trino.spi.metrics.Metrics;
 import io.trino.testing.BaseConnectorTest;
 import io.trino.testing.DistributedQueryRunner;
-import io.trino.testing.MaterializedResult;
-import io.trino.testing.MaterializedRow;
+import io.trino.testing.MaterializedResultWithQueryId;
 import io.trino.testing.QueryRunner;
-import io.trino.testing.ResultWithQueryId;
 import io.trino.testing.TestingConnectorBehavior;
 import io.trino.testing.sql.TestTable;
 import io.trino.testng.services.Flaky;
@@ -44,10 +42,9 @@ import static io.trino.SystemSessionProperties.ENABLE_LARGE_DYNAMIC_FILTERS;
 import static io.trino.plugin.memory.MemoryQueryRunner.createMemoryQueryRunner;
 import static io.trino.sql.planner.OptimizerConfig.JoinDistributionType;
 import static io.trino.sql.planner.OptimizerConfig.JoinDistributionType.BROADCAST;
-import static io.trino.testing.assertions.Assert.assertEquals;
-import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
@@ -66,10 +63,12 @@ public class TestMemoryConnectorTest
         return createMemoryQueryRunner(
                 // Adjust DF limits to test edge cases
                 ImmutableMap.<String, String>builder()
-                        .put("dynamic-filtering.small-broadcast.max-distinct-values-per-driver", "100")
-                        .put("dynamic-filtering.small-broadcast.range-row-limit-per-driver", "100")
-                        .put("dynamic-filtering.large-broadcast.max-distinct-values-per-driver", "100")
-                        .put("dynamic-filtering.large-broadcast.range-row-limit-per-driver", "100000")
+                        .put("dynamic-filtering.small.max-distinct-values-per-driver", "100")
+                        .put("dynamic-filtering.small.range-row-limit-per-driver", "100")
+                        .put("dynamic-filtering.large.max-distinct-values-per-driver", "100")
+                        .put("dynamic-filtering.large.range-row-limit-per-driver", "100000")
+                        .put("dynamic-filtering.small-partitioned.max-distinct-values-per-driver", "100")
+                        .put("dynamic-filtering.small-partitioned.range-row-limit-per-driver", "200")
                         .put("dynamic-filtering.large-partitioned.max-distinct-values-per-driver", "100")
                         .put("dynamic-filtering.large-partitioned.range-row-limit-per-driver", "100000")
                         // disable semi join to inner join rewrite to test semi join operators explicitly
@@ -82,32 +81,33 @@ public class TestMemoryConnectorTest
                         .build());
     }
 
+    @SuppressWarnings("DuplicateBranchesInSwitch")
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         switch (connectorBehavior) {
+            case SUPPORTS_DELETE:
+            case SUPPORTS_UPDATE:
+            case SUPPORTS_MERGE:
+                return false;
+
             case SUPPORTS_PREDICATE_PUSHDOWN:
             case SUPPORTS_LIMIT_PUSHDOWN:
             case SUPPORTS_TOPN_PUSHDOWN:
             case SUPPORTS_AGGREGATION_PUSHDOWN:
-                return false;
-
-            case SUPPORTS_ADD_COLUMN:
-            case SUPPORTS_DROP_COLUMN:
-            case SUPPORTS_RENAME_COLUMN:
-                return false;
-
-            case SUPPORTS_CREATE_TABLE_WITH_TABLE_COMMENT:
-            case SUPPORTS_CREATE_TABLE_WITH_COLUMN_COMMENT:
-            case SUPPORTS_COMMENT_ON_TABLE:
-            case SUPPORTS_COMMENT_ON_COLUMN:
+            case SUPPORTS_DEREFERENCE_PUSHDOWN:
                 return false;
 
             case SUPPORTS_RENAME_SCHEMA:
                 return false;
 
-            case SUPPORTS_CREATE_VIEW:
-                return true;
+            case SUPPORTS_ADD_COLUMN:
+            case SUPPORTS_RENAME_COLUMN:
+            case SUPPORTS_SET_COLUMN_TYPE:
+                return false;
+
+            case SUPPORTS_CREATE_MATERIALIZED_VIEW:
+                return false;
 
             case SUPPORTS_NOT_NULL_CONSTRAINT:
                 return false;
@@ -141,11 +141,11 @@ public class TestMemoryConnectorTest
 
         assertQuery("SELECT * FROM test_select ORDER BY nationkey", "SELECT * FROM nation ORDER BY nationkey");
 
-        assertQueryResult("INSERT INTO test_select SELECT * FROM tpch.tiny.nation", 25L);
+        assertUpdate("INSERT INTO test_select SELECT * FROM tpch.tiny.nation", 25L);
 
-        assertQueryResult("INSERT INTO test_select SELECT * FROM tpch.tiny.nation", 25L);
+        assertUpdate("INSERT INTO test_select SELECT * FROM tpch.tiny.nation", 25L);
 
-        assertQueryResult("SELECT count(*) FROM test_select", 75L);
+        assertThat(computeScalar("SELECT count(*) FROM test_select")).isEqualTo(75L);
     }
 
     @Test
@@ -188,7 +188,7 @@ public class TestMemoryConnectorTest
     private Metrics collectCustomMetrics(String sql)
     {
         DistributedQueryRunner runner = (DistributedQueryRunner) getQueryRunner();
-        ResultWithQueryId<MaterializedResult> result = runner.executeWithQueryId(getSession(), sql);
+        MaterializedResultWithQueryId result = runner.executeWithQueryId(getSession(), sql);
         return runner
                 .getCoordinator()
                 .getQueryManager()
@@ -203,14 +203,14 @@ public class TestMemoryConnectorTest
     @Test(timeOut = 30_000)
     public void testPhysicalInputPositions()
     {
-        ResultWithQueryId<MaterializedResult> result = getDistributedQueryRunner().executeWithQueryId(
+        MaterializedResultWithQueryId result = getDistributedQueryRunner().executeWithQueryId(
                 getSession(),
                 "SELECT * FROM lineitem JOIN tpch.tiny.supplier ON lineitem.suppkey = supplier.suppkey " +
                         "AND supplier.name = 'Supplier#000000001'");
         assertEquals(result.getResult().getRowCount(), 615);
 
         OperatorStats probeStats = getScanOperatorStats(getDistributedQueryRunner(), result.getQueryId()).stream()
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(); // there should be two: one for lineitem and one for supplier
         assertEquals(probeStats.getInputPositions(), 615);
         assertEquals(probeStats.getPhysicalInputPositions(), LINEITEM_COUNT);
     }
@@ -248,11 +248,11 @@ public class TestMemoryConnectorTest
     @Test(timeOut = 30_000, dataProvider = "joinDistributionTypes")
     public void testJoinDynamicFilteringSingleValue(JoinDistributionType joinDistributionType)
     {
-        assertQueryResult("SELECT orderkey FROM orders WHERE comment = 'nstructions sleep furiously among '", 1L);
-        assertQueryResult("SELECT COUNT() FROM lineitem WHERE orderkey = 1", 6L);
+        assertThat(computeScalar("SELECT orderkey FROM orders WHERE comment = 'nstructions sleep furiously among '")).isEqualTo(1L);
+        assertThat(computeScalar("SELECT COUNT() FROM lineitem WHERE orderkey = 1")).isEqualTo(6L);
 
-        assertQueryResult("SELECT partkey FROM part WHERE comment = 'onic deposits'", 1552L);
-        assertQueryResult("SELECT COUNT() FROM lineitem WHERE partkey = 1552", 39L);
+        assertThat(computeScalar("SELECT partkey FROM part WHERE comment = 'onic deposits'")).isEqualTo(1552L);
+        assertThat(computeScalar("SELECT COUNT() FROM lineitem WHERE partkey = 1552")).isEqualTo(39L);
 
         // Join lineitem with a single row of orders
         assertDynamicFiltering(
@@ -456,7 +456,7 @@ public class TestMemoryConnectorTest
 
     private void assertDynamicFiltering(@Language("SQL") String selectQuery, Session session, int expectedRowCount, int... expectedOperatorRowsRead)
     {
-        ResultWithQueryId<MaterializedResult> result = getDistributedQueryRunner().executeWithQueryId(session, selectQuery);
+        MaterializedResultWithQueryId result = getDistributedQueryRunner().executeWithQueryId(session, selectQuery);
 
         assertEquals(result.getResult().getRowCount(), expectedRowCount);
         assertEquals(getOperatorRowsRead(getDistributedQueryRunner(), result.getQueryId()), Ints.asList(expectedOperatorRowsRead));
@@ -490,18 +490,18 @@ public class TestMemoryConnectorTest
     public void testCreateTableWithNoData()
     {
         assertUpdate("CREATE TABLE test_empty (a BIGINT)");
-        assertQueryResult("SELECT count(*) FROM test_empty", 0L);
-        assertQueryResult("INSERT INTO test_empty SELECT nationkey FROM tpch.tiny.nation", 25L);
-        assertQueryResult("SELECT count(*) FROM test_empty", 25L);
+        assertThat(computeScalar("SELECT count(*) FROM test_empty")).isEqualTo(0L);
+        assertUpdate("INSERT INTO test_empty SELECT nationkey FROM tpch.tiny.nation", 25L);
+        assertThat(computeScalar("SELECT count(*) FROM test_empty")).isEqualTo(25L);
     }
 
     @Test
     public void testCreateFilteredOutTable()
     {
         assertUpdate("CREATE TABLE filtered_out AS SELECT nationkey FROM tpch.tiny.nation WHERE nationkey < 0", "SELECT count(nationkey) FROM nation WHERE nationkey < 0");
-        assertQueryResult("SELECT count(*) FROM filtered_out", 0L);
-        assertQueryResult("INSERT INTO filtered_out SELECT nationkey FROM tpch.tiny.nation", 25L);
-        assertQueryResult("SELECT count(*) FROM filtered_out", 25L);
+        assertThat(computeScalar("SELECT count(*) FROM filtered_out")).isEqualTo(0L);
+        assertUpdate("INSERT INTO filtered_out SELECT nationkey FROM tpch.tiny.nation", 25L);
+        assertThat(computeScalar("SELECT count(*) FROM filtered_out")).isEqualTo(25L);
     }
 
     @Test
@@ -509,7 +509,7 @@ public class TestMemoryConnectorTest
     {
         assertUpdate("CREATE TABLE test_select_empty AS SELECT * FROM tpch.tiny.nation WHERE nationkey > 1000", "SELECT count(*) FROM nation WHERE nationkey > 1000");
 
-        assertQueryResult("SELECT count(*) FROM test_select_empty", 0L);
+        assertThat(computeScalar("SELECT count(*) FROM test_select_empty")).isEqualTo(0L);
     }
 
     @Test
@@ -530,12 +530,14 @@ public class TestMemoryConnectorTest
         assertUpdate("CREATE SCHEMA schema1");
         assertUpdate("CREATE SCHEMA schema2");
 
-        assertQueryResult("SHOW SCHEMAS", "default", "information_schema", "schema1", "schema2");
+        assertThat(query("SHOW SCHEMAS"))
+                .skippingTypesCheck()
+                .matches("VALUES 'default', 'information_schema', 'schema1', 'schema2'");
         assertUpdate("CREATE TABLE schema1.nation AS SELECT * FROM tpch.tiny.nation WHERE nationkey % 2 = 0", "SELECT count(*) FROM nation WHERE MOD(nationkey, 2) = 0");
         assertUpdate("CREATE TABLE schema2.nation AS SELECT * FROM tpch.tiny.nation WHERE nationkey % 2 = 1", "SELECT count(*) FROM nation WHERE MOD(nationkey, 2) = 1");
 
-        assertQueryResult("SELECT count(*) FROM schema1.nation", 13L);
-        assertQueryResult("SELECT count(*) FROM schema2.nation", 12L);
+        assertThat(computeScalar("SELECT count(*) FROM schema1.nation")).isEqualTo(13L);
+        assertThat(computeScalar("SELECT count(*) FROM schema2.nation")).isEqualTo(12L);
     }
 
     @Test
@@ -557,7 +559,7 @@ public class TestMemoryConnectorTest
         assertUpdate("CREATE VIEW test_view AS SELECT 123 x");
         assertUpdate("CREATE OR REPLACE VIEW test_view AS " + query);
 
-        assertQueryFails("CREATE TABLE test_view (x date)", "View \\[default.test_view] already exists");
+        assertQueryFails("CREATE TABLE test_view (x date)", ".*Table 'memory.default.test_view' already exists");
         assertQueryFails("CREATE VIEW test_view AS SELECT 123 x", ".*View already exists: 'memory.default.test_view'");
 
         assertQuery("SELECT * FROM test_view", query);
@@ -584,20 +586,5 @@ public class TestMemoryConnectorTest
 
         assertUpdate("DROP VIEW test_different_schema.test_view_renamed");
         assertUpdate("DROP SCHEMA test_different_schema");
-    }
-
-    private void assertQueryResult(@Language("SQL") String sql, Object... expected)
-    {
-        MaterializedResult rows = computeActual(sql);
-        assertEquals(rows.getRowCount(), expected.length);
-
-        for (int i = 0; i < expected.length; i++) {
-            MaterializedRow materializedRow = rows.getMaterializedRows().get(i);
-            int fieldCount = materializedRow.getFieldCount();
-            assertEquals(fieldCount, 1, format("Expected only one column, but got '%d'", fieldCount));
-            Object value = materializedRow.getField(0);
-            assertEquals(value, expected[i]);
-            assertEquals(materializedRow.getFieldCount(), 1);
-        }
     }
 }

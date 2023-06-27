@@ -13,6 +13,7 @@
  */
 package io.trino.connector.system.jdbc;
 
+import com.google.inject.Inject;
 import io.trino.FullConnectorSession;
 import io.trino.Session;
 import io.trino.metadata.Metadata;
@@ -26,9 +27,7 @@ import io.trino.spi.connector.RecordCursor;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.predicate.TupleDomain;
 
-import javax.inject.Inject;
-
-import static io.trino.metadata.MetadataListing.listCatalogs;
+import static io.trino.metadata.MetadataListing.listCatalogNames;
 import static io.trino.metadata.MetadataUtil.TableMetadataBuilder.tableMetadataBuilder;
 import static io.trino.spi.type.VarcharType.createUnboundedVarcharType;
 import static java.util.Objects.requireNonNull;
@@ -63,7 +62,7 @@ public class CatalogJdbcTable
     {
         Session session = ((FullConnectorSession) connectorSession).getSession();
         Builder table = InMemoryRecordSet.builder(METADATA);
-        for (String name : listCatalogs(session, metadata, accessControl).keySet()) {
+        for (String name : listCatalogNames(session, metadata, accessControl)) {
             table.addRow(name);
         }
         return table.build().cursor();

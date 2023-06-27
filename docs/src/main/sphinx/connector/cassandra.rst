@@ -14,7 +14,7 @@ Requirements
 
 To connect to Cassandra, you need:
 
-* Cassandra version 2.2 or higher.
+* Cassandra version 3.0 or higher.
 * Network access from the Trino coordinator and workers to Cassandra.
   Port 9042 is the default port.
 
@@ -22,9 +22,9 @@ Configuration
 -------------
 
 To configure the Cassandra connector, create a catalog properties file
-``etc/catalog/cassandra.properties`` with the following contents,
-replacing ``host1,host2`` with a comma-separated list of the Cassandra
-nodes, used to discovery the cluster topology:
+``etc/catalog/example.properties`` with the following contents, replacing
+``host1,host2`` with a comma-separated list of the Cassandra nodes, used to
+discovery the cluster topology:
 
 .. code-block:: text
 
@@ -50,7 +50,7 @@ Configuration properties
 The following configuration properties are available:
 
 ================================================== ======================================================================
-Property Name                                      Description
+Property name                                      Description
 ================================================== ======================================================================
 ``cassandra.contact-points``                       Comma-separated list of hosts in a Cassandra cluster. The Cassandra
                                                    driver uses these contact points to discover cluster topology.
@@ -94,7 +94,7 @@ Property Name                                      Description
 The following advanced configuration properties are available:
 
 ============================================================= ======================================================================
-Property Name                                                 Description
+Property name                                                 Description
 ============================================================= ======================================================================
 ``cassandra.fetch-size``                                      Number of rows fetched at a time in a Cassandra query.
 
@@ -144,13 +144,6 @@ Property Name                                                 Description
 ``cassandra.load-policy.dc-aware.allow-remote-dc-for-local``  Set to ``true`` to allow to use hosts of
                                                               remote datacenter for local consistency level.
 
-``cassandra.load-policy.use-token-aware``                     Set to ``true`` to use ``TokenAwarePolicy`` (defaults to ``false``).
-
-``cassandra.load-policy.shuffle-replicas``                    Set to ``true`` to use ``TokenAwarePolicy`` with shuffling of replicas,
-                                                              defaults to ``false``.
-
-``cassandra.load-policy.allowed-addresses``                   Comma-separated list of hosts to allow.
-
 ``cassandra.no-host-available-retry-timeout``                 Retry timeout for ``AllNodesFailedException``, defaults to ``1m``.
 
 ``cassandra.speculative-execution.limit``                     The number of speculative executions. This is disabled by default.
@@ -159,9 +152,11 @@ Property Name                                                 Description
 
 ``cassandra.tls.enabled``                                     Whether TLS security is enabled, defaults to ``false``.
 
-``cassandra.tls.keystore-path``                               Path to the PEM or JKS key store.
+``cassandra.tls.keystore-path``                               Path to the :doc:`PEM </security/inspect-pem>` or
+                                                              :doc:`JKS </security/inspect-jks>` key store file.
 
-``cassandra.tls.truststore-path``                             Path to the PEM or JKS trust store.
+``cassandra.tls.truststore-path``                             Path to the :doc:`PEM </security/inspect-pem>` or
+                                                              :doc:`JKS </security/inspect-jks>` trust store file.
 
 ``cassandra.tls.keystore-password``                           Password for the key store.
 
@@ -172,17 +167,17 @@ Querying Cassandra tables
 -------------------------
 
 The ``users`` table is an example Cassandra table from the Cassandra
-`Getting Started`_ guide. It can be created along with the ``mykeyspace``
+`Getting Started`_ guide. It can be created along with the ``example_keyspace``
 keyspace using Cassandra's cqlsh (CQL interactive terminal):
 
 .. _Getting Started: https://cassandra.apache.org/doc/latest/cassandra/getting_started/index.html
 
 .. code-block:: text
 
-    cqlsh> CREATE KEYSPACE mykeyspace
+    cqlsh> CREATE KEYSPACE example_keyspace
        ... WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };
-    cqlsh> USE mykeyspace;
-    cqlsh:mykeyspace> CREATE TABLE users (
+    cqlsh> USE example_keyspace;
+    cqlsh:example_keyspace> CREATE TABLE users (
                   ...   user_id int PRIMARY KEY,
                   ...   fname text,
                   ...   lname text
@@ -190,7 +185,7 @@ keyspace using Cassandra's cqlsh (CQL interactive terminal):
 
 This table can be described in Trino::
 
-    DESCRIBE cassandra.mykeyspace.users;
+    DESCRIBE example.example_keyspace.users;
 
 .. code-block:: text
 
@@ -203,45 +198,163 @@ This table can be described in Trino::
 
 This table can then be queried in Trino::
 
-    SELECT * FROM cassandra.mykeyspace.users;
+    SELECT * FROM example.example_keyspace.users;
 
-Data types
-----------
+.. _cassandra-type-mapping:
 
-The data types mappings are as follows:
+Type mapping
+------------
 
-================  ======
-Cassandra         Trino
-================  ======
-ASCII             VARCHAR
-BIGINT            BIGINT
-BLOB              VARBINARY
-BOOLEAN           BOOLEAN
-DATE              DATE
-DECIMAL           DOUBLE
-DOUBLE            DOUBLE
-FLOAT             REAL
-INET              VARCHAR(45)
-INT               INTEGER
-LIST<?>           VARCHAR
-MAP<?, ?>         VARCHAR
-SET<?>            VARCHAR
-SMALLINT          SMALLINT
-TEXT              VARCHAR
-TIMESTAMP         TIMESTAMP(3) WITH TIME ZONE
-TIMEUUID          UUID
-TINYINT           TINYINT
-TUPLE             ROW with anonymous fields
-UUID              UUID
-UDT               ROW with field names
-VARCHAR           VARCHAR
-VARINT            VARCHAR
-================  ======
+Because Trino and Cassandra each support types that the other does not, this
+connector :ref:`modifies some types <type-mapping-overview>` when reading or
+writing data. Data types may not map the same way in both directions between
+Trino and the data source. Refer to the following sections for type mapping in
+each direction.
 
-Any collection (LIST/MAP/SET) can be designated as FROZEN, and the value is
-mapped to VARCHAR. Additionally, blobs have the limitation that they cannot be empty.
+Cassandra type to Trino type mapping
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Types not mentioned in the table above are not supported.
+The connector maps Cassandra types to the corresponding Trino types according to
+the following table:
+
+.. list-table:: Cassandra type to Trino type mapping
+  :widths: 30, 25, 50
+  :header-rows: 1
+
+  * - Cassandra type
+    - Trino type
+    - Notes
+  * - ``BOOLEAN``
+    - ``BOOLEAN``
+    -
+  * - ``TINYINT``
+    - ``TINYINT``
+    -
+  * - ``SMALLINT``
+    - ``SMALLINT``
+    -
+  * - ``INT``
+    - ``INTEGER``
+    -
+  * - ``BIGINT``
+    - ``BIGINT``
+    -
+  * - ``FLOAT``
+    - ``REAL``
+    -
+  * - ``DOUBLE``
+    - ``DOUBLE``
+    -
+  * - ``DECIMAL``
+    - ``DOUBLE``
+    -
+  * - ``ASCII``
+    - ``VARCHAR``
+    - US-ASCII character string
+  * - ``TEXT``
+    - ``VARCHAR``
+    - UTF-8 encoded string
+  * - ``VARCHAR``
+    - ``VARCHAR``
+    - UTF-8 encoded string
+  * - ``VARINT``
+    - ``VARCHAR``
+    - Arbitrary-precision integer
+  * - ``BLOB``
+    - ``VARBINARY``
+    -
+  * - ``DATE``
+    - ``DATE``
+    -
+  * - ``TIME``
+    - ``TIME(9)``
+    -
+  * - ``TIMESTAMP``
+    - ``TIMESTAMP(3) WITH TIME ZONE``
+    -
+  * - ``LIST<?>``
+    - ``VARCHAR``
+    -
+  * - ``MAP<?, ?>``
+    - ``VARCHAR``
+    -
+  * - ``SET<?>``
+    - ``VARCHAR``
+    -
+  * - ``TUPLE``
+    - ``ROW`` with anonymous fields
+    -
+  * - ``UDT``
+    - ``ROW`` with field names
+    -
+  * - ``INET``
+    - ``IPADDRESS``
+    -
+  * - ``UUID``
+    - ``UUID``
+    -
+  * - ``TIMEUUID``
+    - ``UUID``
+    -
+
+No other types are supported.
+
+Trino type to Cassandra type mapping
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The connector maps Trino types to the corresponding Cassandra types according to
+the following table:
+
+.. list-table:: Trino type to Cassandra type mapping
+  :widths: 30, 25, 50
+  :header-rows: 1
+
+  * - Trino type
+    - Cassandra type
+    - Notes
+
+  * - ``BOOLEAN``
+    - ``BOOLEAN``
+    -
+  * - ``TINYINT``
+    - ``TINYINT``
+    -
+  * - ``SMALLINT``
+    - ``SMALLINT``
+    -
+  * - ``INTEGER``
+    - ``INT``
+    -
+  * - ``BIGINT``
+    - ``BIGINT``
+    -
+  * - ``REAL``
+    - ``FLOAT``
+    -
+  * - ``DOUBLE``
+    - ``DOUBLE``
+    -
+  * - ``VARCHAR``
+    - ``TEXT``
+    -
+  * - ``DATE``
+    - ``DATE``
+    -
+  * - ``TIMESTAMP(3) WITH TIME ZONE``
+    - ``TIMESTAMP``
+    -
+  * - ``IPADDRESS``
+    - ``INET``
+    -
+  * - ``UUID``
+    - ``UUID``
+    -
+
+
+No other types are supported.
+
+Partition key types
+-------------------
 
 Partition keys can only be of the following types:
 
@@ -284,6 +397,38 @@ statements, the connector supports the following features:
 * :doc:`/sql/create-table`
 * :doc:`/sql/create-table-as`
 * :doc:`/sql/drop-table`
+
+Table functions
+---------------
+
+The connector provides specific :doc:`table functions </functions/table>` to
+access Cassandra.
+.. _cassandra-query-function:
+
+``query(varchar) -> table``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``query`` function allows you to query the underlying Cassandra directly. It
+requires syntax native to Cassandra, because the full query is pushed down and
+processed by Cassandra. This can be useful for accessing native features which are
+not available in Trino or for improving query performance in situations where
+running a query natively may be faster.
+
+.. include:: query-table-function-ordering.fragment
+
+As a simple example, to select an entire table::
+
+    SELECT
+      *
+    FROM
+      TABLE(
+        example.system.query(
+          query => 'SELECT
+            *
+          FROM
+            tpch.nation'
+        )
+      );
 
 DROP TABLE
 ^^^^^^^^^^

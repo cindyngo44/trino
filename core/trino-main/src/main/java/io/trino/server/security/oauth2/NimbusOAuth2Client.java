@@ -15,6 +15,7 @@ package io.trino.server.security.oauth2;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Ordering;
+import com.google.inject.Inject;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -32,6 +33,7 @@ import com.nimbusds.oauth2.sdk.AuthorizationCode;
 import com.nimbusds.oauth2.sdk.AuthorizationCodeGrant;
 import com.nimbusds.oauth2.sdk.AuthorizationRequest;
 import com.nimbusds.oauth2.sdk.ParseException;
+import com.nimbusds.oauth2.sdk.RefreshTokenGrant;
 import com.nimbusds.oauth2.sdk.Scope;
 import com.nimbusds.oauth2.sdk.TokenRequest;
 import com.nimbusds.oauth2.sdk.auth.ClientSecretBasic;
@@ -41,6 +43,7 @@ import com.nimbusds.oauth2.sdk.id.Issuer;
 import com.nimbusds.oauth2.sdk.id.State;
 import com.nimbusds.oauth2.sdk.token.AccessToken;
 import com.nimbusds.oauth2.sdk.token.BearerAccessToken;
+import com.nimbusds.oauth2.sdk.token.RefreshToken;
 import com.nimbusds.oauth2.sdk.token.Tokens;
 import com.nimbusds.openid.connect.sdk.AuthenticationRequest;
 import com.nimbusds.openid.connect.sdk.Nonce;
@@ -56,8 +59,6 @@ import com.nimbusds.openid.connect.sdk.validators.InvalidHashException;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import io.trino.server.security.oauth2.OAuth2ServerConfigProvider.OAuth2ServerConfig;
-
-import javax.inject.Inject;
 
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -104,7 +105,6 @@ public class NimbusOAuth2Client
     @Inject
     public NimbusOAuth2Client(OAuth2Config oauthConfig, OAuth2ServerConfigProvider serverConfigurationProvider, NimbusHttpClient httpClient)
     {
-        requireNonNull(oauthConfig, "oauthConfig is null");
         issuer = new Issuer(oauthConfig.getIssuer());
         clientId = new ClientID(oauthConfig.getClientId());
         clientAuth = new ClientSecretBasic(clientId, new Secret(oauthConfig.getClientSecret()));
@@ -174,11 +174,22 @@ public class NimbusOAuth2Client
         return getJWTClaimsSet(accessToken).map(JWTClaimsSet::getClaims);
     }
 
+    @Override
+    public Response refreshTokens(String refreshToken)
+            throws ChallengeFailedException
+    {
+        checkState(loaded, "OAuth2 client not initialized");
+        return flow.refreshTokens(refreshToken);
+    }
+
     private interface AuthorizationCodeFlow
     {
         Request createAuthorizationRequest(String state, URI callbackUri);
 
         Response getOAuth2Response(String code, URI callbackUri, Optional<String> nonce)
+                throws ChallengeFailedException;
+
+        Response refreshTokens(String refreshToken)
                 throws ChallengeFailedException;
     }
 
@@ -206,12 +217,31 @@ public class NimbusOAuth2Client
             checkArgument(nonce.isEmpty(), "Unexpected nonce provided");
             AccessTokenResponse tokenResponse = getTokenResponse(code, callbackUri, AccessTokenResponse::parse);
             Tokens tokens = tokenResponse.toSuccessResponse().getTokens();
+            return toResponse(tokens, Optional.empty());
+        }
+
+        @Override
+        public Response refreshTokens(String refreshToken)
+                throws ChallengeFailedException
+        {
+            requireNonNull(refreshToken, "refreshToken is null");
+            AccessTokenResponse tokenResponse = getTokenResponse(refreshToken, AccessTokenResponse::parse);
+            return toResponse(tokenResponse.toSuccessResponse().getTokens(), Optional.of(refreshToken));
+        }
+
+        private Response toResponse(Tokens tokens, Optional<String> existingRefreshToken)
+                throws ChallengeFailedException
+        {
             AccessToken accessToken = tokens.getAccessToken();
+            RefreshToken refreshToken = tokens.getRefreshToken();
             JWTClaimsSet claims = getJWTClaimsSet(accessToken.getValue()).orElseThrow(() -> new ChallengeFailedException("invalid access token"));
             return new Response(
                     accessToken.getValue(),
                     determineExpiration(getExpiration(accessToken), claims.getExpirationTime()),
-                    Optional.empty());
+                    Optional.empty(),
+                    Optional.ofNullable(refreshToken)
+                            .map(RefreshToken::getValue)
+                            .or(() -> existingRefreshToken));
         }
     }
 
@@ -244,15 +274,39 @@ public class NimbusOAuth2Client
         public Response getOAuth2Response(String code, URI callbackUri, Optional<String> nonce)
                 throws ChallengeFailedException
         {
+            if (nonce.isEmpty()) {
+                throw new ChallengeFailedException("Missing nonce");
+            }
+
             OIDCTokenResponse tokenResponse = getTokenResponse(code, callbackUri, OIDCTokenResponse::parse);
             OIDCTokens tokens = tokenResponse.getOIDCTokens();
             validateTokens(tokens, nonce);
+            return toResponse(tokens, Optional.empty());
+        }
+
+        @Override
+        public Response refreshTokens(String refreshToken)
+                throws ChallengeFailedException
+        {
+            OIDCTokenResponse tokenResponse = getTokenResponse(refreshToken, OIDCTokenResponse::parse);
+            OIDCTokens tokens = tokenResponse.getOIDCTokens();
+            validateTokens(tokens);
+            return toResponse(tokens, Optional.of(refreshToken));
+        }
+
+        private Response toResponse(OIDCTokens tokens, Optional<String> existingRefreshToken)
+                throws ChallengeFailedException
+        {
             AccessToken accessToken = tokens.getAccessToken();
+            RefreshToken refreshToken = tokens.getRefreshToken();
             JWTClaimsSet claims = getJWTClaimsSet(accessToken.getValue()).orElseThrow(() -> new ChallengeFailedException("invalid access token"));
             return new Response(
                     accessToken.getValue(),
                     determineExpiration(getExpiration(accessToken), claims.getExpirationTime()),
-                    Optional.ofNullable(tokens.getIDTokenString()));
+                    Optional.ofNullable(tokens.getIDTokenString()),
+                    Optional.ofNullable(refreshToken)
+                            .map(RefreshToken::getValue)
+                            .or(() -> existingRefreshToken));
         }
 
         private void validateTokens(OIDCTokens tokens, Optional<String> nonce)
@@ -263,15 +317,21 @@ public class NimbusOAuth2Client
                         tokens.getIDToken(),
                         nonce.map(this::hashNonce)
                                 .map(Nonce::new)
-                                .orElseThrow(() -> new ChallengeFailedException("Missing nonce")));
+                                .orElse(null));
                 AccessTokenHash accessTokenHash = idToken.getAccessTokenHash();
                 if (accessTokenHash != null) {
                     AccessTokenValidator.validate(tokens.getAccessToken(), ((JWSHeader) tokens.getIDToken().getHeader()).getAlgorithm(), accessTokenHash);
                 }
             }
             catch (BadJOSEException | JOSEException | InvalidHashException e) {
-                throw new ChallengeFailedException("Cannot validate nonce parameter", e);
+                throw new ChallengeFailedException("Cannot validate tokens", e);
             }
+        }
+
+        private void validateTokens(OIDCTokens tokens)
+                throws ChallengeFailedException
+        {
+            validateTokens(tokens, Optional.empty());
         }
 
         private String hashNonce(String nonce)
@@ -285,7 +345,19 @@ public class NimbusOAuth2Client
     private <T extends AccessTokenResponse> T getTokenResponse(String code, URI callbackUri, NimbusAirliftHttpClient.Parser<T> parser)
             throws ChallengeFailedException
     {
-        T tokenResponse = httpClient.execute(new TokenRequest(tokenUrl, clientAuth, new AuthorizationCodeGrant(new AuthorizationCode(code), callbackUri)), parser);
+        return getTokenResponse(new TokenRequest(tokenUrl, clientAuth, new AuthorizationCodeGrant(new AuthorizationCode(code), callbackUri)), parser);
+    }
+
+    private <T extends AccessTokenResponse> T getTokenResponse(String refreshToken, NimbusAirliftHttpClient.Parser<T> parser)
+            throws ChallengeFailedException
+    {
+        return getTokenResponse(new TokenRequest(tokenUrl, clientAuth, new RefreshTokenGrant(new RefreshToken(refreshToken)), scope), parser);
+    }
+
+    private <T extends AccessTokenResponse> T getTokenResponse(TokenRequest tokenRequest, NimbusAirliftHttpClient.Parser<T> parser)
+            throws ChallengeFailedException
+    {
+        T tokenResponse = httpClient.execute(tokenRequest, parser);
         if (!tokenResponse.indicatesSuccess()) {
             throw new ChallengeFailedException("Error while fetching access token: " + tokenResponse.toErrorResponse().toJSONObject());
         }
@@ -305,7 +377,7 @@ public class NimbusOAuth2Client
         try {
             UserInfoResponse response = httpClient.execute(new UserInfoRequest(userinfoUrl.get(), new BearerAccessToken(accessToken)), UserInfoResponse::parse);
             if (!response.indicatesSuccess()) {
-                LOG.error("Received bad response from userinfo endpoint: " + response.toErrorResponse().getErrorObject());
+                LOG.error("Received bad response from userinfo endpoint: %s", response.toErrorResponse().getErrorObject());
                 return Optional.empty();
             }
             return Optional.of(response.toSuccessResponse().getUserInfo().toJWTClaimsSet());

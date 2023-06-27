@@ -16,22 +16,28 @@ package io.trino.testing.containers;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.net.HostAndPort;
+import dev.failsafe.Failsafe;
+import dev.failsafe.RetryPolicy;
 import io.airlift.log.Logger;
-import net.jodah.failsafe.Failsafe;
-import net.jodah.failsafe.RetryPolicy;
+import io.trino.testing.ResourcePresence;
+import org.testcontainers.containers.Container;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
+import org.testcontainers.containers.output.OutputFrame;
 import org.testcontainers.containers.startupcheck.IsRunningStartupCheckStrategy;
 import org.testcontainers.containers.wait.strategy.Wait;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.net.HostAndPort.fromParts;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static org.testcontainers.utility.MountableFile.forClasspathResource;
 import static org.testcontainers.utility.MountableFile.forHostPath;
@@ -76,13 +82,13 @@ public abstract class BaseTestContainer
         for (int port : this.ports) {
             container.addExposedPort(port);
         }
-        filesToMount.forEach(this::copyFileToContainer);
+        filesToMount.forEach((dockerPath, filePath) -> container.withCopyFileToContainer(forHostPath(filePath), dockerPath));
         container.withEnv(envVars);
         container.withCreateContainerCmdModifier(c -> c.withHostName(hostName))
                 .withStartupCheckStrategy(new IsRunningStartupCheckStrategy())
                 .waitingFor(Wait.forListeningPort())
                 .withStartupTimeout(Duration.ofMinutes(5));
-        network.ifPresent(container::withNetwork);
+        network.ifPresent(net -> container.withNetwork(net).withNetworkAliases(hostName));
     }
 
     protected void withRunCommand(List<String> runCommand)
@@ -90,7 +96,12 @@ public abstract class BaseTestContainer
         container.withCommand(runCommand.toArray(new String[runCommand.size()]));
     }
 
-    protected void copyFileToContainer(String resourcePath, String dockerPath)
+    protected void withLogConsumer(Consumer<OutputFrame> logConsumer)
+    {
+        container.withLogConsumer(logConsumer);
+    }
+
+    protected void copyResourceToContainer(String resourcePath, String dockerPath)
     {
         container.withCopyFileToContainer(
                 forHostPath(
@@ -109,13 +120,14 @@ public abstract class BaseTestContainer
 
     public void start()
     {
-        Failsafe.with(new RetryPolicy<>()
+        Failsafe.with(RetryPolicy.builder()
                         .withMaxRetries(startupRetryLimit)
                         .onRetry(event -> log.warn(
                                 "%s initialization failed (attempt %s), will retry. Exception: %s",
                                 this.getClass().getSimpleName(),
                                 event.getAttemptCount(),
-                                event.getLastFailure().getMessage())))
+                                event.getLastException().getMessage()))
+                        .build())
                 .get(() -> TestContainers.startOrReuse(this.container));
     }
 
@@ -124,10 +136,39 @@ public abstract class BaseTestContainer
         container.stop();
     }
 
+    public String executeInContainerFailOnError(String... commandAndArgs)
+    {
+        Container.ExecResult execResult = executeInContainer(commandAndArgs);
+        if (execResult.getExitCode() != 0) {
+            String message = format("Command [%s] exited with %s", String.join(" ", commandAndArgs), execResult.getExitCode());
+            log.error("%s", message);
+            log.error("stderr: %s", execResult.getStderr());
+            log.error("stdout: %s", execResult.getStdout());
+            throw new RuntimeException(message);
+        }
+        return execResult.getStdout();
+    }
+
+    public Container.ExecResult executeInContainer(String... commandAndArgs)
+    {
+        try {
+            return container.execInContainer(commandAndArgs);
+        }
+        catch (IOException | InterruptedException e) {
+            throw new RuntimeException("Exception while running command: " + String.join(" ", commandAndArgs), e);
+        }
+    }
+
     @Override
     public void close()
     {
         stop();
+    }
+
+    @ResourcePresence
+    public boolean isPresent()
+    {
+        return container.isRunning() || container.getContainerId() != null;
     }
 
     protected abstract static class Builder<SELF extends BaseTestContainer.Builder<SELF, BUILD>, BUILD extends BaseTestContainer>

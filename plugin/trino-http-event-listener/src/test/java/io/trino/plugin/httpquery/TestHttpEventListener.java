@@ -17,6 +17,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.json.JsonCodec;
+import io.trino.operator.RetryPolicy;
 import io.trino.spi.eventlistener.EventListener;
 import io.trino.spi.eventlistener.QueryCompletedEvent;
 import io.trino.spi.eventlistener.QueryContext;
@@ -26,6 +27,7 @@ import io.trino.spi.eventlistener.QueryMetadata;
 import io.trino.spi.eventlistener.QueryStatistics;
 import io.trino.spi.eventlistener.SplitCompletedEvent;
 import io.trino.spi.eventlistener.SplitStatistics;
+import io.trino.spi.eventlistener.StageOutputBufferUtilization;
 import io.trino.spi.resourcegroups.QueryType;
 import io.trino.spi.resourcegroups.ResourceGroupId;
 import io.trino.spi.session.ResourceEstimates;
@@ -61,11 +63,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
+import static com.google.common.collect.MoreCollectors.onlyElement;
 import static io.airlift.json.JsonCodec.jsonCodec;
-import static io.trino.testing.assertions.Assert.assertEquals;
 import static java.lang.String.format;
 import static java.time.Duration.ofMillis;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
@@ -115,7 +120,8 @@ public class TestHttpEventListener
                 new HashMap<>(), // sessionProperties
                 new ResourceEstimates(Optional.empty(), Optional.empty(), Optional.of(1000L)),
                 "serverAddress", "serverVersion", "environment",
-                Optional.of(QueryType.SELECT));
+                Optional.of(QueryType.SELECT),
+                RetryPolicy.QUERY.toString());
 
         queryMetadata = new QueryMetadata(
                 "queryId",
@@ -127,7 +133,9 @@ public class TestHttpEventListener
                 List.of(),
                 List.of(),
                 URI.create("http://localhost"),
-                Optional.empty(), Optional.empty());
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty());
 
         splitStatistics = new SplitStatistics(
                 ofMillis(1000),
@@ -154,6 +162,9 @@ public class TestHttpEventListener
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                0L,
                 0L,
                 0L,
                 0L,
@@ -174,6 +185,8 @@ public class TestHttpEventListener
                 Collections.emptyList(),
                 0,
                 true,
+                Collections.emptyList(),
+                List.of(new StageOutputBufferUtilization(0, 10, 0.1, 0.5, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99, 0.0, 1.0, Duration.ofSeconds(1234))),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 Optional.empty());
@@ -228,6 +241,7 @@ public class TestHttpEventListener
         catch (IOException ignored) {
             // MockWebServer.close() method sometimes throws 'Gave up waiting for executor to shut down'
         }
+        server = null;
     }
 
     /**
@@ -449,7 +463,9 @@ public class TestHttpEventListener
         assertFalse(body.isEmpty(), "Body is empty");
 
         ObjectMapper objectMapper = new ObjectMapper();
-        assertEquals(objectMapper.readTree(body), objectMapper.readTree(eventJson), format("Json value is wrong, expected %s but found %s", eventJson, body));
+        assertThat(objectMapper.readTree(body))
+                .as("Json value is wrong, expected %s but found %s", eventJson, body)
+                .isEqualTo(objectMapper.readTree(eventJson));
     }
 
     private void setupServerTLSCertificate()
@@ -460,8 +476,9 @@ public class TestHttpEventListener
         TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         trustManagerFactory.init(keyStore);
 
-        X509TrustManager x509TrustManager = (X509TrustManager) List.of(trustManagerFactory.getTrustManagers()).stream().filter(tm -> tm instanceof X509TrustManager)
-                .findFirst().get();
+        X509TrustManager x509TrustManager = (X509TrustManager) Stream.of(trustManagerFactory.getTrustManagers())
+                .filter(tm -> tm instanceof X509TrustManager)
+                .collect(onlyElement());
 
         KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
         keyManagerFactory.init(keyStore, "testing-ssl".toCharArray());

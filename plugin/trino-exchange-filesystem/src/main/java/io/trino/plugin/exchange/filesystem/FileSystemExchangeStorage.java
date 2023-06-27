@@ -15,35 +15,29 @@ package io.trino.plugin.exchange.filesystem;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
-import javax.crypto.SecretKey;
-
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
-import java.util.Optional;
-import java.util.Queue;
 
 public interface FileSystemExchangeStorage
         extends AutoCloseable
 {
-    void createDirectories(URI dir) throws IOException;
+    void createDirectories(URI dir)
+            throws IOException;
 
-    ExchangeStorageReader createExchangeStorageReader(Queue<ExchangeSourceFile> sourceFiles, int maxPageStorageSize);
+    ExchangeStorageReader createExchangeStorageReader(List<ExchangeSourceFile> sourceFiles, int maxPageStorageSize);
 
-    ExchangeStorageWriter createExchangeStorageWriter(URI file, Optional<SecretKey> secretKey);
-
-    boolean exists(URI file) throws IOException;
+    ExchangeStorageWriter createExchangeStorageWriter(URI file);
 
     ListenableFuture<Void> createEmptyFile(URI file);
 
     ListenableFuture<Void> deleteRecursively(List<URI> directories);
 
-    List<FileStatus> listFiles(URI dir) throws IOException;
-
-    List<URI> listDirectories(URI dir) throws IOException;
+    ListenableFuture<List<FileStatus>> listFilesRecursively(URI dir);
 
     int getWriteBufferSize();
 
     @Override
-    void close() throws IOException;
+    void close()
+            throws IOException;
 }

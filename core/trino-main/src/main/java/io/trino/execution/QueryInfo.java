@@ -19,6 +19,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.trino.SessionRepresentation;
+import io.trino.client.NodeVersion;
 import io.trino.operator.RetryPolicy;
 import io.trino.spi.ErrorCode;
 import io.trino.spi.ErrorType;
@@ -39,6 +40,7 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.Set;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
@@ -80,6 +82,8 @@ public class QueryInfo
     private final Optional<ResourceGroupId> resourceGroupId;
     private final Optional<QueryType> queryType;
     private final RetryPolicy retryPolicy;
+    private final boolean pruned;
+    private final NodeVersion version;
 
     @JsonCreator
     public QueryInfo(
@@ -113,7 +117,9 @@ public class QueryInfo
             @JsonProperty("finalQueryInfo") boolean finalQueryInfo,
             @JsonProperty("resourceGroupId") Optional<ResourceGroupId> resourceGroupId,
             @JsonProperty("queryType") Optional<QueryType> queryType,
-            @JsonProperty("retryPolicy") RetryPolicy retryPolicy)
+            @JsonProperty("retryPolicy") RetryPolicy retryPolicy,
+            @JsonProperty("pruned") boolean pruned,
+            @JsonProperty("version") NodeVersion version)
     {
         requireNonNull(queryId, "queryId is null");
         requireNonNull(session, "session is null");
@@ -140,6 +146,7 @@ public class QueryInfo
         requireNonNull(warnings, "warnings is null");
         requireNonNull(queryType, "queryType is null");
         requireNonNull(retryPolicy, "retryPolicy is null");
+        requireNonNull(version, "version is null");
 
         this.queryId = queryId;
         this.session = session;
@@ -174,6 +181,8 @@ public class QueryInfo
         this.resourceGroupId = resourceGroupId;
         this.queryType = queryType;
         this.retryPolicy = retryPolicy;
+        this.pruned = pruned;
+        this.version = version;
     }
 
     @JsonProperty
@@ -198,6 +207,18 @@ public class QueryInfo
     public boolean isScheduled()
     {
         return queryStats.isScheduled();
+    }
+
+    @JsonProperty
+    public OptionalDouble getProgressPercentage()
+    {
+        return queryStats.getProgressPercentage();
+    }
+
+    @JsonProperty
+    public OptionalDouble getRunningPercentage()
+    {
+        return queryStats.getRunningPercentage();
     }
 
     @JsonProperty
@@ -376,6 +397,18 @@ public class QueryInfo
     public RetryPolicy getRetryPolicy()
     {
         return retryPolicy;
+    }
+
+    @JsonProperty
+    public boolean isPruned()
+    {
+        return pruned;
+    }
+
+    @JsonProperty
+    public NodeVersion getVersion()
+    {
+        return version;
     }
 
     @Override

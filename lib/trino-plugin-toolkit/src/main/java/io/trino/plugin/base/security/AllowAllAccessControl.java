@@ -33,7 +33,7 @@ public class AllowAllAccessControl
         implements ConnectorAccessControl
 {
     @Override
-    public void checkCanCreateSchema(ConnectorSecurityContext context, String schemaName)
+    public void checkCanCreateSchema(ConnectorSecurityContext context, String schemaName, Map<String, Object> properties)
     {
     }
 
@@ -94,6 +94,11 @@ public class AllowAllAccessControl
     }
 
     @Override
+    public void checkCanSetViewComment(ConnectorSecurityContext context, SchemaTableName viewName)
+    {
+    }
+
+    @Override
     public void checkCanSetTableProperties(ConnectorSecurityContext context, SchemaTableName tableName, Map<String, Optional<Object>> properties)
     {
     }
@@ -137,6 +142,11 @@ public class AllowAllAccessControl
 
     @Override
     public void checkCanRenameColumn(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+    }
+
+    @Override
+    public void checkCanAlterColumn(ConnectorSecurityContext context, SchemaTableName tableName)
     {
     }
 
@@ -212,6 +222,11 @@ public class AllowAllAccessControl
 
     @Override
     public void checkCanRenameMaterializedView(ConnectorSecurityContext context, SchemaTableName viewName, SchemaTableName newViewName)
+    {
+    }
+
+    @Override
+    public void checkCanGrantExecuteFunctionPrivilege(ConnectorSecurityContext context, FunctionKind functionKind, SchemaRoutineName functionName, TrinoPrincipal grantee, boolean grantOption)
     {
     }
 
@@ -327,6 +342,12 @@ public class AllowAllAccessControl
     public List<ViewExpression> getRowFilters(ConnectorSecurityContext context, SchemaTableName tableName)
     {
         return ImmutableList.of();
+    }
+
+    @Override
+    public Optional<ViewExpression> getColumnMask(ConnectorSecurityContext context, SchemaTableName tableName, String columnName, Type type)
+    {
+        return Optional.empty();
     }
 
     @Override

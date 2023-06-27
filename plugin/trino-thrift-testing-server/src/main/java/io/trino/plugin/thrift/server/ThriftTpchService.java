@@ -42,9 +42,9 @@ import io.trino.spi.type.Type;
 import io.trino.tpch.TpchColumn;
 import io.trino.tpch.TpchEntity;
 import io.trino.tpch.TpchTable;
+import jakarta.annotation.PreDestroy;
 
 import javax.annotation.Nullable;
-import javax.annotation.PreDestroy;
 
 import java.io.Closeable;
 import java.util.ArrayList;
@@ -310,12 +310,10 @@ public class ThriftTpchService
         if (schemaNameOrNull == null) {
             return SCHEMAS;
         }
-        else if (SCHEMAS.contains(schemaNameOrNull)) {
+        if (SCHEMAS.contains(schemaNameOrNull)) {
             return ImmutableList.of(schemaNameOrNull);
         }
-        else {
-            return ImmutableList.of();
-        }
+        return ImmutableList.of();
     }
 
     private static String getTypeString(TpchColumn<?> column)

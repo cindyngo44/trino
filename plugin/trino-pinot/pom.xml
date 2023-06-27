@@ -4,7 +4,7 @@
     <parent>
         <artifactId>trino-root</artifactId>
         <groupId>io.trino</groupId>
-        <version>385-SNAPSHOT</version>
+        <version>421-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -14,7 +14,7 @@
 
     <properties>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
-        <dep.pinot.version>0.10.0</dep.pinot.version>
+        <dep.pinot.version>0.12.1</dep.pinot.version>
         <!--
            Project's default for air.test.parallel is 'methods'. By design, 'instances' makes TestNG run tests from one class in a single thread.
            As a side effect, it prevents TestNG from initializing multiple test instances upfront, which happens with 'methods'.
@@ -33,26 +33,6 @@
             </snapshots>
         </repository>
     </repositories>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>com.google.protobuf</groupId>
-                <artifactId>protobuf-java</artifactId>
-                <version>3.17.2</version>
-            </dependency>
-            <dependency>
-                <groupId>org.glassfish.jersey.core</groupId>
-                <artifactId>jersey-common</artifactId>
-                <version>2.30</version>
-            </dependency>
-            <dependency>
-                <groupId>org.osgi</groupId>
-                <artifactId>org.osgi.core</artifactId>
-                <version>6.0.0</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -125,6 +105,11 @@
             <artifactId>guice</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+        </dependency>
+
         <!-- Used for basic authentication only -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
@@ -140,17 +125,11 @@
         <dependency>
             <groupId>commons-codec</groupId>
             <artifactId>commons-codec</artifactId>
-            <version>1.15</version>
         </dependency>
 
         <dependency>
-            <groupId>javax.annotation</groupId>
-            <artifactId>javax.annotation-api</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>javax.inject</groupId>
-            <artifactId>javax.inject</artifactId>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
 
         <dependency>
@@ -161,7 +140,7 @@
         <dependency>
             <groupId>org.apache.helix</groupId>
             <artifactId>helix-core</artifactId>
-            <version>0.9.8</version>
+            <version>1.0.4</version>
             <exclusions>
                 <exclusion>
                     <groupId>commons-io</groupId>
@@ -178,6 +157,19 @@
                 <exclusion>
                     <groupId>org.slf4j</groupId>
                     <artifactId>slf4j-log4j12</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-core</artifactId>
+                </exclusion>
+                <!-- Conflicts with log4j-to-slf4j from trino-kafka -->
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -303,6 +295,18 @@
                     <groupId>com.google.code.findbugs</groupId>
                     <artifactId>annotations</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>org.apache.zookeeper</groupId>
+                    <artifactId>zookeeper</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.core</groupId>
+                    <artifactId>jersey-server</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.yaml</groupId>
+                    <artifactId>snakeyaml</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
 
@@ -368,12 +372,24 @@
                     <artifactId>validation-api</artifactId>
                 </exclusion>
                 <exclusion>
+                    <groupId>org.glassfish.grizzly</groupId>
+                    <artifactId>grizzly-http-server</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.hk2</groupId>
+                    <artifactId>hk2-locator</artifactId>
+                </exclusion>
+                <exclusion>
                     <groupId>org.glassfish.hk2.external</groupId>
                     <artifactId>jakarta.inject</artifactId>
                 </exclusion>
                 <exclusion>
                     <groupId>org.glassfish.hk2.external</groupId>
                     <artifactId>aopalliance-repackaged</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.glassfish.jersey.containers</groupId>
+                    <artifactId>jersey-container-grizzly2-http</artifactId>
                 </exclusion>
                 <exclusion>
                     <groupId>org.apache.lucene</groupId>
@@ -459,14 +475,14 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-lang3</artifactId>
-            <version>3.8</version>
+            <version>3.11</version>
             <scope>runtime</scope>
         </dependency>
 
         <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpcore</artifactId>
-            <version>4.4.11</version>
+            <version>4.4.13</version>
             <scope>runtime</scope>
         </dependency>
 
@@ -474,6 +490,12 @@
             <groupId>org.apache.pinot</groupId>
             <artifactId>pinot-yammer</artifactId>
             <version>${dep.pinot.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
             <scope>runtime</scope>
         </dependency>
 
@@ -493,6 +515,18 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-context</artifactId>
             <scope>provided</scope>
         </dependency>
 
@@ -518,6 +552,13 @@
 
         <dependency>
             <groupId>io.trino</groupId>
+            <artifactId>trino-spi</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
             <artifactId>trino-testing</artifactId>
             <scope>test</scope>
         </dependency>
@@ -535,6 +576,18 @@
         </dependency>
 
         <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-tpch</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino.tpch</groupId>
+            <artifactId>tpch</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>testing</artifactId>
             <scope>test</scope>
@@ -544,6 +597,12 @@
             <groupId>io.confluent</groupId>
             <artifactId>kafka-avro-serializer</artifactId>
             <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.zookeeper</groupId>
+                    <artifactId>zookeeper</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -553,8 +612,8 @@
         </dependency>
 
         <dependency>
-            <groupId>javax.ws.rs</groupId>
-            <artifactId>javax.ws.rs-api</artifactId>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -567,12 +626,6 @@
         <dependency>
             <groupId>org.assertj</groupId>
             <artifactId>assertj-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.jetbrains</groupId>
-            <artifactId>annotations</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -609,6 +662,66 @@
                             </excludes>
                         </requireUpperBoundDeps>
                     </rules>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.basepom.maven</groupId>
+                <artifactId>duplicate-finder-maven-plugin</artifactId>
+                <configuration>
+                    <ignoredDependencies>
+                        <dependency>
+                            <groupId>io.netty</groupId>
+                            <artifactId>netty-transport-classes-epoll</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>io.netty</groupId>
+                            <artifactId>netty-transport-native-epoll</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>jakarta.validation</groupId>
+                            <artifactId>jakarta.validation-api</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>javax.validation</groupId>
+                            <artifactId>validation-api</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.helix</groupId>
+                            <artifactId>helix-common</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.helix</groupId>
+                            <artifactId>helix-core</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.helix</groupId>
+                            <artifactId>metrics-common</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.helix</groupId>
+                            <artifactId>metadata-store-directory-common</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.helix</groupId>
+                            <artifactId>zookeeper-api</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>commons-logging</groupId>
+                            <artifactId>commons-logging</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.slf4j</groupId>
+                            <artifactId>jcl-over-slf4j</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.apache.logging.log4j</groupId>
+                            <artifactId>log4j-slf4j-impl:2.17.1</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.slf4j</groupId>
+                            <artifactId>slf4j-jdk14</artifactId>
+                        </dependency>
+                    </ignoredDependencies>
                 </configuration>
             </plugin>
         </plugins>

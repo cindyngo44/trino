@@ -50,9 +50,9 @@ public abstract class ForwardingConnectorAccessControl
     protected abstract ConnectorAccessControl delegate();
 
     @Override
-    public void checkCanCreateSchema(ConnectorSecurityContext context, String schemaName)
+    public void checkCanCreateSchema(ConnectorSecurityContext context, String schemaName, Map<String, Object> properties)
     {
-        delegate().checkCanCreateSchema(context, schemaName);
+        delegate().checkCanCreateSchema(context, schemaName, properties);
     }
 
     @Override
@@ -128,6 +128,12 @@ public abstract class ForwardingConnectorAccessControl
     }
 
     @Override
+    public void checkCanSetViewComment(ConnectorSecurityContext context, SchemaTableName viewName)
+    {
+        delegate().checkCanSetViewComment(context, viewName);
+    }
+
+    @Override
     public void checkCanSetColumnComment(ConnectorSecurityContext context, SchemaTableName tableName)
     {
         delegate().checkCanSetColumnComment(context, tableName);
@@ -173,6 +179,12 @@ public abstract class ForwardingConnectorAccessControl
     public void checkCanRenameColumn(ConnectorSecurityContext context, SchemaTableName tableName)
     {
         delegate().checkCanRenameColumn(context, tableName);
+    }
+
+    @Override
+    public void checkCanAlterColumn(ConnectorSecurityContext context, SchemaTableName tableName)
+    {
+        delegate().checkCanAlterColumn(context, tableName);
     }
 
     @Override
@@ -263,6 +275,12 @@ public abstract class ForwardingConnectorAccessControl
     public void checkCanRenameMaterializedView(ConnectorSecurityContext context, SchemaTableName viewName, SchemaTableName newViewName)
     {
         delegate().checkCanRenameMaterializedView(context, viewName, newViewName);
+    }
+
+    @Override
+    public void checkCanGrantExecuteFunctionPrivilege(ConnectorSecurityContext context, FunctionKind functionKind, SchemaRoutineName functionName, TrinoPrincipal grantee, boolean grantOption)
+    {
+        delegate().checkCanGrantExecuteFunctionPrivilege(context, functionKind, functionName, grantee, grantOption);
     }
 
     @Override
@@ -391,12 +409,6 @@ public abstract class ForwardingConnectorAccessControl
     public void checkCanExecuteFunction(ConnectorSecurityContext context, FunctionKind functionKind, SchemaRoutineName function)
     {
         delegate().checkCanExecuteFunction(context, functionKind, function);
-    }
-
-    @Override
-    public Optional<ViewExpression> getRowFilter(ConnectorSecurityContext context, SchemaTableName tableName)
-    {
-        return delegate().getRowFilter(context, tableName);
     }
 
     @Override

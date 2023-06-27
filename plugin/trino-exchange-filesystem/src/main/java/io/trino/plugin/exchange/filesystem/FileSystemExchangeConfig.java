@@ -16,6 +16,7 @@ package io.trino.plugin.exchange.filesystem;
 import com.google.common.collect.ImmutableList;
 import io.airlift.configuration.Config;
 import io.airlift.configuration.ConfigDescription;
+import io.airlift.configuration.DefunctConfig;
 import io.airlift.configuration.LegacyConfig;
 import io.airlift.units.DataSize;
 
@@ -30,10 +31,10 @@ import static io.airlift.units.DataSize.Unit.GIGABYTE;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static io.trino.plugin.exchange.filesystem.FileSystemExchangeManager.PATH_SEPARATOR;
 
+@DefunctConfig("exchange.encryption-enabled")
 public class FileSystemExchangeConfig
 {
     private List<URI> baseDirectories = ImmutableList.of();
-    private boolean exchangeEncryptionEnabled = true;
     // For S3, we make read requests aligned with part boundaries. Incomplete slice at the end of the buffer is
     // possible and will be copied to the beginning of the new buffer, and we need to make room for that.
     // Therefore, it's recommended to set `maxPageStorageSize` to be slightly larger than a multiple of part size.
@@ -42,7 +43,10 @@ public class FileSystemExchangeConfig
     private int exchangeSinkBuffersPerPartition = 2;
     private DataSize exchangeSinkMaxFileSize = DataSize.of(1, GIGABYTE);
     private int exchangeSourceConcurrentReaders = 4;
+    private int exchangeSourceMaxFilesPerReader = 25;
     private int maxOutputPartitionCount = 50;
+    private int exchangeFileListingParallelism = 50;
+    private DataSize exchangeSourceHandleTargetDataSize = DataSize.of(256, MEGABYTE);
 
     @NotNull
     @NotEmpty(message = "At least one base directory needs to be configured")
@@ -67,18 +71,6 @@ public class FileSystemExchangeConfig
             }
             this.baseDirectories = builder.build();
         }
-        return this;
-    }
-
-    public boolean isExchangeEncryptionEnabled()
-    {
-        return exchangeEncryptionEnabled;
-    }
-
-    @Config("exchange.encryption-enabled")
-    public FileSystemExchangeConfig setExchangeEncryptionEnabled(boolean exchangeEncryptionEnabled)
-    {
-        this.exchangeEncryptionEnabled = exchangeEncryptionEnabled;
         return this;
     }
 
@@ -150,6 +142,19 @@ public class FileSystemExchangeConfig
     }
 
     @Min(1)
+    public int getExchangeSourceMaxFilesPerReader()
+    {
+        return exchangeSourceMaxFilesPerReader;
+    }
+
+    @Config("exchange.source-max-files-per-reader")
+    public FileSystemExchangeConfig setExchangeSourceMaxFilesPerReader(int exchangeSourceMaxFilesPerReader)
+    {
+        this.exchangeSourceMaxFilesPerReader = exchangeSourceMaxFilesPerReader;
+        return this;
+    }
+
+    @Min(1)
     public int getMaxOutputPartitionCount()
     {
         return maxOutputPartitionCount;
@@ -159,6 +164,34 @@ public class FileSystemExchangeConfig
     public FileSystemExchangeConfig setMaxOutputPartitionCount(int maxOutputPartitionCount)
     {
         this.maxOutputPartitionCount = maxOutputPartitionCount;
+        return this;
+    }
+
+    @Min(1)
+    public int getExchangeFileListingParallelism()
+    {
+        return exchangeFileListingParallelism;
+    }
+
+    @Config("exchange.file-listing-parallelism")
+    @ConfigDescription("Max parallelism of file listing calls when enumerating spooling files. The actual parallelism will depend on implementation")
+    public FileSystemExchangeConfig setExchangeFileListingParallelism(int exchangeFileListingParallelism)
+    {
+        this.exchangeFileListingParallelism = exchangeFileListingParallelism;
+        return this;
+    }
+
+    @NotNull
+    public DataSize getExchangeSourceHandleTargetDataSize()
+    {
+        return exchangeSourceHandleTargetDataSize;
+    }
+
+    @Config("exchange.source-handle-target-data-size")
+    @ConfigDescription("Target size of the data referenced by a single source handle")
+    public FileSystemExchangeConfig setExchangeSourceHandleTargetDataSize(DataSize exchangeSourceHandleTargetDataSize)
+    {
+        this.exchangeSourceHandleTargetDataSize = exchangeSourceHandleTargetDataSize;
         return this;
     }
 }

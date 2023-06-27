@@ -13,10 +13,10 @@
  */
 package io.trino.metadata;
 
+import com.google.inject.Inject;
 import io.trino.server.PluginClassLoader;
-import oshi.annotation.concurrent.ThreadSafe;
 
-import javax.inject.Inject;
+import javax.annotation.concurrent.ThreadSafe;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

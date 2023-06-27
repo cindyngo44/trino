@@ -30,7 +30,6 @@ import java.time.ZoneOffset;
 
 import static io.trino.tempto.assertions.QueryAssert.Row.row;
 import static io.trino.tempto.assertions.QueryAssert.assertQueryFailure;
-import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tempto.fulfillment.table.MutableTableRequirement.State.CREATED;
 import static io.trino.tempto.fulfillment.table.MutableTablesState.mutableTablesState;
 import static io.trino.tempto.fulfillment.table.TableRequirements.mutableTable;
@@ -43,6 +42,7 @@ import static io.trino.tests.product.utils.QueryAssertions.assertContainsEventua
 import static io.trino.tests.product.utils.QueryExecutors.onTrino;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MINUTES;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestInsertIntoCassandraTable
         extends ProductTest
@@ -74,7 +74,7 @@ public class TestInsertIntoCassandraTable
         assertThat(queryResult).hasNoRows();
 
         // TODO Following types are not supported now. We need to change null into the value after fixing it
-        // blob, frozen<set<type>>, inet, list<type>, map<type,type>, set<type>, decimal, varint
+        // blob, frozen<set<type>>, list<type>, map<type,type>, set<type>, decimal, varint
         onTrino().executeQuery("INSERT INTO " + tableNameInDatabase +
                 "(a, b, bl, bo, d, do, dt, f, fr, i, ti, si, integer, l, m, s, t, ts, tu, u, v, vari) VALUES (" +
                 "'ascii value', " +
@@ -86,7 +86,7 @@ public class TestInsertIntoCassandraTable
                 "DATE '9999-12-31'," +
                 "REAL '123.45678', " +
                 "null, " +
-                "null, " +
+                "IPADDRESS '0.0.0.0', " +
                 "TINYINT '-128', " +
                 "SMALLINT '-32768', " +
                 "123, " +
@@ -111,7 +111,7 @@ public class TestInsertIntoCassandraTable
                         Date.valueOf("9999-12-31"),
                         123.45678,
                         null,
-                        null,
+                        "0.0.0.0",
                         123,
                         null,
                         null,

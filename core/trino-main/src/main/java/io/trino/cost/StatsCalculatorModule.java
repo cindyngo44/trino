@@ -15,13 +15,12 @@ package io.trino.cost;
 
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Binder;
+import com.google.inject.Inject;
 import com.google.inject.Module;
+import com.google.inject.Provider;
 import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
 import io.trino.sql.PlannerContext;
-
-import javax.inject.Inject;
-import javax.inject.Provider;
 
 import java.util.List;
 
@@ -65,7 +64,7 @@ public class StatsCalculatorModule
             ImmutableList.Builder<ComposableStatsCalculator.Rule<?>> rules = ImmutableList.builder();
 
             rules.add(new OutputStatsRule());
-            rules.add(new TableScanStatsRule(plannerContext.getMetadata(), normalizer));
+            rules.add(new TableScanStatsRule(normalizer));
             rules.add(new SimpleFilterProjectSemiJoinStatsRule(plannerContext.getMetadata(), normalizer, filterStatsCalculator)); // this must be before FilterStatsRule
             rules.add(new FilterProjectAggregationStatsRule(normalizer, filterStatsCalculator)); // this must be before FilterStatsRule
             rules.add(new FilterStatsRule(normalizer, filterStatsCalculator));

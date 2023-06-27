@@ -16,6 +16,7 @@ package io.trino.server.protocol;
 import com.google.common.collect.Ordering;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.Inject;
 import io.airlift.concurrent.BoundedExecutor;
 import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
@@ -23,6 +24,7 @@ import io.airlift.units.Duration;
 import io.trino.Session;
 import io.trino.client.ProtocolHeaders;
 import io.trino.client.QueryResults;
+import io.trino.exchange.ExchangeManagerRegistry;
 import io.trino.execution.QueryManager;
 import io.trino.operator.DirectExchangeClientSupplier;
 import io.trino.server.ForStatementResource;
@@ -30,23 +32,21 @@ import io.trino.server.ServerConfig;
 import io.trino.server.security.ResourceSecurity;
 import io.trino.spi.QueryId;
 import io.trino.spi.block.BlockEncodingSerde;
-
-import javax.annotation.PreDestroy;
-import javax.inject.Inject;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.container.AsyncResponse;
-import javax.ws.rs.container.Suspended;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.ResponseBuilder;
-import javax.ws.rs.core.UriInfo;
+import jakarta.annotation.PreDestroy;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.container.AsyncResponse;
+import jakarta.ws.rs.container.Suspended;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.Response.ResponseBuilder;
+import jakarta.ws.rs.core.UriInfo;
 
 import java.net.URLEncoder;
 import java.util.Map.Entry;
@@ -61,13 +61,13 @@ import static io.airlift.jaxrs.AsyncResponseHandler.bindAsyncResponse;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static io.trino.server.protocol.Slug.Context.EXECUTING_QUERY;
 import static io.trino.server.security.ResourceSecurity.AccessType.PUBLIC;
+import static jakarta.ws.rs.core.MediaType.TEXT_PLAIN_TYPE;
+import static jakarta.ws.rs.core.Response.Status.NOT_FOUND;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static javax.ws.rs.core.MediaType.TEXT_PLAIN_TYPE;
-import static javax.ws.rs.core.Response.Status.NOT_FOUND;
 
 @Path("/v1/statement/executing")
 public class ExecutingStatementResource
@@ -81,6 +81,7 @@ public class ExecutingStatementResource
 
     private final QueryManager queryManager;
     private final DirectExchangeClientSupplier directExchangeClientSupplier;
+    private final ExchangeManagerRegistry exchangeManagerRegistry;
     private final BlockEncodingSerde blockEncodingSerde;
     private final QueryInfoUrlFactory queryInfoUrlFactory;
     private final BoundedExecutor responseExecutor;
@@ -95,6 +96,7 @@ public class ExecutingStatementResource
     public ExecutingStatementResource(
             QueryManager queryManager,
             DirectExchangeClientSupplier directExchangeClientSupplier,
+            ExchangeManagerRegistry exchangeManagerRegistry,
             BlockEncodingSerde blockEncodingSerde,
             QueryInfoUrlFactory queryInfoUrlTemplate,
             @ForStatementResource BoundedExecutor responseExecutor,
@@ -104,24 +106,21 @@ public class ExecutingStatementResource
     {
         this.queryManager = requireNonNull(queryManager, "queryManager is null");
         this.directExchangeClientSupplier = requireNonNull(directExchangeClientSupplier, "directExchangeClientSupplier is null");
+        this.exchangeManagerRegistry = requireNonNull(exchangeManagerRegistry, "exchangeManagerRegistry is null");
         this.blockEncodingSerde = requireNonNull(blockEncodingSerde, "blockEncodingSerde is null");
         this.queryInfoUrlFactory = requireNonNull(queryInfoUrlTemplate, "queryInfoUrlTemplate is null");
         this.responseExecutor = requireNonNull(responseExecutor, "responseExecutor is null");
         this.timeoutExecutor = requireNonNull(timeoutExecutor, "timeoutExecutor is null");
         this.preparedStatementEncoder = requireNonNull(preparedStatementEncoder, "preparedStatementEncoder is null");
-        this.compressionEnabled = requireNonNull(serverConfig, "serverConfig is null").isQueryResultsCompressionEnabled();
+        this.compressionEnabled = serverConfig.isQueryResultsCompressionEnabled();
 
         queryPurger.scheduleWithFixedDelay(
                 () -> {
                     try {
-                        for (Entry<QueryId, Query> entry : queries.entrySet()) {
+                        for (QueryId queryId : queries.keySet()) {
                             // forget about this query if the query manager is no longer tracking it
-                            try {
-                                queryManager.getQueryState(entry.getKey());
-                            }
-                            catch (NoSuchElementException e) {
-                                // query is no longer registered
-                                Query query = queries.remove(entry.getKey());
+                            if (!queryManager.hasQuery(queryId)) {
+                                Query query = queries.remove(queryId);
                                 if (query != null) {
                                     query.dispose();
                                 }
@@ -130,6 +129,15 @@ public class ExecutingStatementResource
                     }
                     catch (Throwable e) {
                         log.warn(e, "Error removing old queries");
+                    }
+
+                    try {
+                        for (Query query : queries.values()) {
+                            query.markResultsConsumedIfReady();
+                        }
+                    }
+                    catch (Throwable e) {
+                        log.warn(e, "Error marking results consumed");
                     }
                 },
                 200,
@@ -190,6 +198,7 @@ public class ExecutingStatementResource
                 queryManager,
                 queryInfoUrlFactory.getQueryInfoUrl(queryId),
                 directExchangeClientSupplier,
+                exchangeManagerRegistry,
                 responseExecutor,
                 timeoutExecutor,
                 blockEncodingSerde));

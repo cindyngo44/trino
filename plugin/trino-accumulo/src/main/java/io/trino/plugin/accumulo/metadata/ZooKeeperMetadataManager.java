@@ -13,9 +13,11 @@
  */
 package io.trino.plugin.accumulo.metadata;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 import io.airlift.json.ObjectMapperProvider;
 import io.trino.plugin.accumulo.conf.AccumuloConfig;
 import io.trino.plugin.base.TypeDeserializer;
@@ -28,8 +30,6 @@ import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryForever;
 import org.apache.zookeeper.KeeperException;
 
-import javax.inject.Inject;
-
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Locale;
@@ -37,8 +37,8 @@ import java.util.Set;
 
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.plugin.accumulo.AccumuloErrorCode.ZOOKEEPER_ERROR;
+import static io.trino.plugin.base.util.JsonUtils.parseJson;
 import static java.lang.String.format;
-import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.apache.zookeeper.KeeperException.Code.NONODE;
 
@@ -320,29 +320,26 @@ public class ZooKeeperMetadataManager
     }
 
     private boolean isAccumuloTable(byte[] data)
-            throws IOException
     {
         // AccumuloTable does not contain a 'data' node
-        return !mapper.reader().readTree(new String(data, UTF_8)).has("data");
+        return !parseJson(mapper, data, JsonNode.class).has("data");
     }
 
     private boolean isAccumuloView(byte[] data)
-            throws IOException
     {
         // AccumuloView contains a 'data' node
-        return mapper.reader().readTree(new String(data, UTF_8)).has("data");
+        return parseJson(mapper, data, JsonNode.class).has("data");
     }
 
     private AccumuloTable toAccumuloTable(byte[] data)
-            throws IOException
     {
-        return mapper.readValue(new String(data, UTF_8), AccumuloTable.class);
+        return parseJson(mapper, data, AccumuloTable.class);
     }
 
     private AccumuloView toAccumuloView(byte[] data)
             throws IOException
     {
-        return mapper.readValue(new String(data, UTF_8), AccumuloView.class);
+        return parseJson(mapper, data, AccumuloView.class);
     }
 
     private byte[] toJsonBytes(Object obj)

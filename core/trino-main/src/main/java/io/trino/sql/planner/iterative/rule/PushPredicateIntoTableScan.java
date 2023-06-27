@@ -25,7 +25,6 @@ import io.trino.metadata.Metadata;
 import io.trino.metadata.TableHandle;
 import io.trino.metadata.TableProperties;
 import io.trino.metadata.TableProperties.TablePartitioning;
-import io.trino.plugin.base.expression.ConnectorExpressions;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
@@ -35,6 +34,7 @@ import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.Type;
 import io.trino.sql.PlannerContext;
 import io.trino.sql.planner.ConnectorExpressionTranslator;
+import io.trino.sql.planner.ConnectorExpressionTranslator.ConnectorExpressionTranslation;
 import io.trino.sql.planner.DomainTranslator;
 import io.trino.sql.planner.ExpressionInterpreter;
 import io.trino.sql.planner.LayoutConstraintEvaluator;
@@ -43,7 +43,6 @@ import io.trino.sql.planner.NoOpSymbolResolver;
 import io.trino.sql.planner.Symbol;
 import io.trino.sql.planner.SymbolAllocator;
 import io.trino.sql.planner.TypeAnalyzer;
-import io.trino.sql.planner.TypeProvider;
 import io.trino.sql.planner.iterative.Rule;
 import io.trino.sql.planner.plan.FilterNode;
 import io.trino.sql.planner.plan.PlanNode;
@@ -51,6 +50,7 @@ import io.trino.sql.planner.plan.TableScanNode;
 import io.trino.sql.planner.plan.ValuesNode;
 import io.trino.sql.tree.Expression;
 import io.trino.sql.tree.NodeRef;
+import org.assertj.core.util.VisibleForTesting;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -91,10 +91,13 @@ public class PushPredicateIntoTableScan
     private final PlannerContext plannerContext;
     private final TypeAnalyzer typeAnalyzer;
 
-    public PushPredicateIntoTableScan(PlannerContext plannerContext, TypeAnalyzer typeAnalyzer)
+    private final boolean pruneWithPredicateExpression;
+
+    public PushPredicateIntoTableScan(PlannerContext plannerContext, TypeAnalyzer typeAnalyzer, boolean pruneWithPredicateExpression)
     {
         this.plannerContext = requireNonNull(plannerContext, "plannerContext is null");
         this.typeAnalyzer = requireNonNull(typeAnalyzer, "typeAnalyzer is null");
+        this.pruneWithPredicateExpression = pruneWithPredicateExpression;
     }
 
     @Override
@@ -117,7 +120,7 @@ public class PushPredicateIntoTableScan
         Optional<PlanNode> rewritten = pushFilterIntoTableScan(
                 filterNode,
                 tableScan,
-                false,
+                pruneWithPredicateExpression,
                 context.getSession(),
                 context.getSymbolAllocator(),
                 plannerContext,
@@ -134,20 +137,17 @@ public class PushPredicateIntoTableScan
 
     private boolean arePlansSame(FilterNode filter, TableScanNode tableScan, PlanNode rewritten)
     {
-        if (!(rewritten instanceof FilterNode)) {
+        if (!(rewritten instanceof FilterNode rewrittenFilter)) {
             return false;
         }
 
-        FilterNode rewrittenFilter = (FilterNode) rewritten;
         if (!Objects.equals(filter.getPredicate(), rewrittenFilter.getPredicate())) {
             return false;
         }
 
-        if (!(rewrittenFilter.getSource() instanceof TableScanNode)) {
+        if (!(rewrittenFilter.getSource() instanceof TableScanNode rewrittenTableScan)) {
             return false;
         }
-
-        TableScanNode rewrittenTableScan = (TableScanNode) rewrittenFilter.getSource();
 
         return Objects.equals(tableScan.getEnforcedConstraint(), rewrittenTableScan.getEnforcedConstraint()) &&
                 Objects.equals(tableScan.getTable(), rewrittenTableScan.getTable());
@@ -180,12 +180,12 @@ public class PushPredicateIntoTableScan
                 .transformKeys(node.getAssignments()::get)
                 .intersect(node.getEnforcedConstraint());
 
-        ConnectorExpressionTranslation expressionTranslation = translateConjunctsToConnectorExpression(
+        ConnectorExpressionTranslation expressionTranslation = ConnectorExpressionTranslator.translateConjuncts(
                 session,
-                plannerContext,
-                typeAnalyzer,
+                decomposedPredicate.getRemainingExpression(),
                 symbolAllocator.getTypes(),
-                decomposedPredicate.getRemainingExpression());
+                plannerContext,
+                typeAnalyzer);
         Map<String, ColumnHandle> connectorExpressionAssignments = node.getAssignments()
                 .entrySet().stream()
                 .collect(toImmutableMap(entry -> entry.getKey().getName(), Map.Entry::getValue));
@@ -207,18 +207,18 @@ public class PushPredicateIntoTableScan
                             // Simplify the tuple domain to avoid creating an expression with too many nodes,
                             // which would be expensive to evaluate in the call to isCandidate below.
                             domainTranslator.toPredicate(session, newDomain.simplify().transformKeys(assignments::get))));
-            constraint = new Constraint(newDomain, expressionTranslation.getConnectorExpression(), connectorExpressionAssignments, evaluator::isCandidate, evaluator.getArguments());
+            constraint = new Constraint(newDomain, expressionTranslation.connectorExpression(), connectorExpressionAssignments, evaluator::isCandidate, evaluator.getArguments());
         }
         else {
             // Currently, invoking the expression interpreter is very expensive.
             // TODO invoke the interpreter unconditionally when the interpreter becomes cheap enough.
-            constraint = new Constraint(newDomain, expressionTranslation.getConnectorExpression(), connectorExpressionAssignments);
+            constraint = new Constraint(newDomain, expressionTranslation.connectorExpression(), connectorExpressionAssignments);
         }
 
         // check if new domain is wider than domain already provided by table scan
         if (constraint.predicate().isEmpty() &&
                 // TODO do we need to track enforced ConnectorExpression in TableScanNode?
-                TRUE.equals(expressionTranslation.getConnectorExpression()) &&
+                TRUE.equals(expressionTranslation.connectorExpression()) &&
                 newDomain.contains(node.getEnforcedConstraint())) {
             Expression resultingPredicate = createResultingPredicate(
                     plannerContext,
@@ -276,7 +276,7 @@ public class PushPredicateIntoTableScan
                 node.getUseConnectorNodePartitioning());
 
         Expression remainingDecomposedPredicate;
-        if (remainingConnectorExpression.isEmpty() || remainingConnectorExpression.get().equals(expressionTranslation.getConnectorExpression())) {
+        if (remainingConnectorExpression.isEmpty() || remainingConnectorExpression.get().equals(expressionTranslation.connectorExpression())) {
             remainingDecomposedPredicate = decomposedPredicate.getRemainingExpression();
         }
         else {
@@ -292,7 +292,7 @@ public class PushPredicateIntoTableScan
                     new ExpressionInterpreter(translatedExpression, plannerContext, session, translatedExpressionTypes)
                             .optimize(NoOpSymbolResolver.INSTANCE),
                     translatedExpressionTypes.get(NodeRef.of(translatedExpression)));
-            remainingDecomposedPredicate = combineConjuncts(plannerContext.getMetadata(), translatedExpression, expressionTranslation.getRemainingExpression());
+            remainingDecomposedPredicate = combineConjuncts(plannerContext.getMetadata(), translatedExpression, expressionTranslation.remainingExpression());
         }
 
         Expression resultingPredicate = createResultingPredicate(
@@ -358,36 +358,6 @@ public class PushPredicateIntoTableScan
                 combineConjuncts(metadata, nonDeterministicPredicate));
     }
 
-    private static ConnectorExpressionTranslation translateConjunctsToConnectorExpression(
-            Session session,
-            PlannerContext plannerContext,
-            TypeAnalyzer typeAnalyzer,
-            TypeProvider types,
-            Expression expression)
-    {
-        Map<NodeRef<Expression>, Type> remainingExpressionTypes = typeAnalyzer.getTypes(session, types, expression);
-        ConnectorExpressionTranslator.SqlToConnectorExpressionTranslator translator = new ConnectorExpressionTranslator.SqlToConnectorExpressionTranslator(
-                session,
-                remainingExpressionTypes,
-                plannerContext);
-
-        List<Expression> conjuncts = extractConjuncts(expression);
-        List<Expression> remaining = new ArrayList<>();
-        List<ConnectorExpression> converted = new ArrayList<>(conjuncts.size());
-        for (Expression conjunct : conjuncts) {
-            Optional<ConnectorExpression> connectorExpression = translator.process(conjunct);
-            if (connectorExpression.isPresent()) {
-                converted.add(connectorExpression.get());
-            }
-            else {
-                remaining.add(conjunct);
-            }
-        }
-        return new ConnectorExpressionTranslation(
-                combineConjuncts(plannerContext.getMetadata(), remaining),
-                ConnectorExpressions.and(converted));
-    }
-
     static Expression createResultingPredicate(
             PlannerContext plannerContext,
             Session session,
@@ -426,27 +396,34 @@ public class PushPredicateIntoTableScan
         // 3. When the connector could enforce all of the domains, the unenforced would be TupleDomain.all().
 
         // In all 3 cases shown above, the unenforced is not TupleDomain.none().
-        checkArgument(!unenforced.isNone());
+        checkArgument(!unenforced.isNone(), "Unexpected unenforced none tuple domain");
 
         Map<ColumnHandle, Domain> predicateDomains = predicate.getDomains().get();
         Map<ColumnHandle, Domain> unenforcedDomains = unenforced.getDomains().get();
         ImmutableMap.Builder<ColumnHandle, Domain> enforcedDomainsBuilder = ImmutableMap.builder();
         for (Map.Entry<ColumnHandle, Domain> entry : predicateDomains.entrySet()) {
             ColumnHandle predicateColumnHandle = entry.getKey();
+            Domain predicateDomain = entry.getValue();
             if (unenforcedDomains.containsKey(predicateColumnHandle)) {
+                Domain unenforcedDomain = unenforcedDomains.get(predicateColumnHandle);
                 checkArgument(
-                        entry.getValue().equals(unenforcedDomains.get(predicateColumnHandle)),
-                        "Enforced tuple domain cannot be determined. The connector is expected to enforce the respective domain entirely on none, some, or all of the column.");
+                        predicateDomain.contains(unenforcedDomain),
+                        "Unexpected unenforced domain %s on column %s. Expected all, none, or a domain equal to or narrower than %s",
+                        unenforcedDomain,
+                        predicateColumnHandle,
+                        predicateDomain);
             }
             else {
-                enforcedDomainsBuilder.put(predicateColumnHandle, entry.getValue());
+                enforcedDomainsBuilder.put(predicateColumnHandle, predicateDomain);
             }
         }
-        Map<ColumnHandle, Domain> enforcedDomains = enforcedDomainsBuilder.buildOrThrow();
-        checkArgument(
-                enforcedDomains.size() + unenforcedDomains.size() == predicateDomains.size(),
-                "Enforced tuple domain cannot be determined. Connector returned an unenforced TupleDomain that contains columns not in predicate.");
-        return TupleDomain.withColumnDomains(enforcedDomains);
+        return TupleDomain.withColumnDomains(enforcedDomainsBuilder.buildOrThrow());
+    }
+
+    @VisibleForTesting
+    public boolean getPruneWithPredicateExpression()
+    {
+        return pruneWithPredicateExpression;
     }
 
     private static class SplitExpression
@@ -475,28 +452,6 @@ public class PushPredicateIntoTableScan
         public Expression getNonDeterministicPredicate()
         {
             return nonDeterministicPredicate;
-        }
-    }
-
-    private static class ConnectorExpressionTranslation
-    {
-        private final Expression remainingExpression;
-        private final ConnectorExpression connectorExpression;
-
-        public ConnectorExpressionTranslation(Expression remainingExpression, ConnectorExpression connectorExpression)
-        {
-            this.remainingExpression = requireNonNull(remainingExpression, "remainingExpression is null");
-            this.connectorExpression = requireNonNull(connectorExpression, "connectorExpression is null");
-        }
-
-        public Expression getRemainingExpression()
-        {
-            return remainingExpression;
-        }
-
-        public ConnectorExpression getConnectorExpression()
-        {
-            return connectorExpression;
         }
     }
 }

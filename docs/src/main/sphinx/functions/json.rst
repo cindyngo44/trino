@@ -12,39 +12,44 @@ binary strings. Although Trino supports ``JSON`` type, it is not used or
 produced by the following functions.
 
 Trino supports three functions for querying JSON data:
-:ref:`json_exists<json_exists>`,
-:ref:`json_query<json_query>`, and :ref:`json_value<json_value>`. Each of them
+:ref:`json_exists<json-exists>`,
+:ref:`json_query<json-query>`, and :ref:`json_value<json-value>`. Each of them
 is based on the same mechanism of exploring and processing JSON input using
 JSON path.
+
+Trino also supports two functions for generating JSON data --
+:ref:`json_array<json-array>`, and :ref:`json_object<json-object>`.
+
+.. _json-path-language:
 
 JSON path language
 ------------------
 
 The JSON path language is a special language, used exclusively by certain SQL
 operators to specify the query to perform on the JSON input. Although JSON path
-expressions are embedded in a SQL query, their syntax significantly differs
+expressions are embedded in SQL queries, their syntax significantly differs
 from SQL. The semantics of predicates, operators, etc. in JSON path expressions
 generally follow the semantics of SQL. The JSON path language is case-sensitive
 for keywords and identifiers.
 
-.. _json_path_syntax_and_semantics:
+.. _json-path-syntax-and-semantics:
 
 JSON path syntax and semantics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A JSON path expression, similar to a SQL expression, is a recursive structure.
-Although the name "path" suggests a linear sequence of operations going step by
-step deeper into the JSON structure, a JSON path expression is in fact a tree.
-It can access the input JSON item multiple times, in multiple ways, and combine
-the results. Moreover, the result of a JSON path expression is not a single
-item, but an ordered sequence of items. Each of the sub-expressions takes one
-or more input sequences, and returns a sequence as the result.
+JSON path expressions are recursive structures. Although the name "path"
+suggests a linear sequence of operations going step by step deeper into the JSON
+structure, a JSON path expression is in fact a tree. It can access the input
+JSON item multiple times, in multiple ways, and combine the results. Moreover,
+the result of a JSON path expression is not a single item, but an ordered
+sequence of items. Each of the sub-expressions takes one or more input
+sequences, and returns a sequence as the result.
 
 .. note::
 
     In the lax mode, most path operations first unnest all JSON arrays in the
     input sequence. Any divergence from this rule is mentioned in the following
-    listing. Path modes are explained in :ref:`json_path_modes`.
+    listing. Path modes are explained in :ref:`json-path-modes`.
 
 The JSON path language features are divided into: literals, variables,
 arithmetic binary expressions, arithmetic unary expressions, and a group of
@@ -78,7 +83,7 @@ literals
 
 - null literal
 
-  It has the semantics of the JSON null, not of SQL null. See :ref:`json_comparison_rules`.
+  It has the semantics of the JSON null, not of SQL null. See :ref:`json-comparison-rules`.
 
 .. code-block:: text
 
@@ -219,6 +224,41 @@ All items in the input sequence must be JSON objects.
 The order of values returned from a single JSON object is arbitrary. The
 sub-sequences from all JSON objects are concatenated in the same order in which
 the JSON objects appear in the input sequence.
+
+.. _json-descendant-member-accessor:
+
+descendant member accessor
+''''''''''''''''''''''''''
+
+Returns the values associated with the specified key in all JSON objects on all
+levels of nesting in the input sequence.
+
+.. code-block:: text
+
+    <path>..key
+    <path>.."key"
+
+The order of returned values is that of preorder depth first search. First, the
+enclosing object is visited, and then all child nodes are visited.
+
+This method does not perform array unwrapping in the lax mode. The results
+are the same in the lax and strict modes. The method traverses into JSON
+arrays and JSON objects. Non-structural JSON items are skipped.
+
+Let ``<path>`` be a sequence containing a JSON object:
+
+.. code-block:: text
+
+    {
+        "id" : 1,
+        "notes" : [{"type" : 1, "comment" : "foo"}, {"type" : 2, "comment" : null}],
+        "comment" : ["bar", "baz"]
+    }
+
+.. code-block:: text
+
+    <path>..comment --> ["bar", "baz"], "foo", null
+
 
 array accessor
 ''''''''''''''
@@ -402,7 +442,7 @@ example because the compared types are not compatible, the result in the strict
 mode is ``unknown``. The result in the lax mode depends on whether the ``true``
 comparison or the error was found first.
 
-.. _json_comparison_rules:
+.. _json-comparison-rules:
 
 Comparison rules
 ****************
@@ -562,7 +602,7 @@ Limitations
 The SQL standard describes the ``datetime()`` JSON path item method and the
 ``like_regex()`` JSON path predicate. Trino does not support them.
 
-.. _json_path_modes:
+.. _json-path-modes:
 
 JSON path modes
 ^^^^^^^^^^^^^^^
@@ -638,7 +678,7 @@ method, the item ``"a"`` causes type mismatch.
 
     <path>.floor() --> ERROR
 
-.. _json_exists:
+.. _json-exists:
 
 json_exists
 -----------
@@ -671,7 +711,7 @@ a single JSON item. For a binary string, you can specify encoding.
 
 ``json_path`` is a string literal, containing the path mode specification, and
 the path expression, following the syntax rules described in
-:ref:`json_path_syntax_and_semantics`.
+:ref:`json-path-syntax-and-semantics`.
 
 .. code-block:: text
 
@@ -768,7 +808,7 @@ id         child_3_above_ten
 103        NULL
 ========== ==================
 
-.. _json_query:
+.. _json-query:
 
 json_query
 ----------
@@ -802,7 +842,7 @@ a single JSON item. For a binary string, you can specify encoding.
 
 ``json_path`` is a string literal, containing the path mode specification, and
 the path expression, following the syntax rules described in
-:ref:`json_path_syntax_and_semantics`.
+:ref:`json-path-syntax-and-semantics`.
 
 .. code-block:: text
 
@@ -983,12 +1023,12 @@ to the ``ON ERROR`` clause are:
 - JSON path evaluation errors, e.g. division by zero
 - Output conversion errors
 
-.. _json_value:
+.. _json-value:
 
 json_value
 ----------
 
-The ``json_value`` function extracts an SQL scalar from a JSON value.
+The ``json_value`` function extracts a scalar SQL value from a JSON value.
 
 .. code-block:: text
 
@@ -1013,7 +1053,7 @@ a single JSON item. For a binary string, you can specify encoding.
 
 ``json_path`` is a string literal, containing the path mode specification, and
 the path expression, following the syntax rules described in
-:ref:`json_path_syntax_and_semantics`.
+:ref:`json-path-syntax-and-semantics`.
 
 .. code-block:: text
 
@@ -1163,6 +1203,251 @@ id         child
 103        'missing'
 ========== ================
 
+.. _json-array:
+
+json_array
+----------
+
+The ``json_array`` function creates a JSON array containing given elements.
+
+.. code-block:: text
+
+    JSON_ARRAY(
+        [ array_element [, ...]
+          [ { NULL ON NULL | ABSENT ON NULL } ] ],
+        [ RETURNING type [ FORMAT JSON [ ENCODING { UTF8 | UTF16 | UTF32 } ] ] ]
+        )
+
+Argument types
+^^^^^^^^^^^^^^
+
+The array elements can be arbitrary expressions. Each passed value is converted
+into a JSON item according to its type, and optional ``FORMAT`` and
+``ENCODING`` specification.
+
+You can pass SQL values of types boolean, numeric, and character string. They
+are converted to corresponding JSON literals::
+
+    SELECT json_array(true, 12e-1, 'text')
+    --> '[true,1.2,"text"]'
+
+Additionally to SQL values, you can pass JSON values. They are character or
+binary strings with a specified format and optional encoding::
+
+    SELECT json_array(
+                      '[  "text"  ] ' FORMAT JSON,
+                      X'5B0035005D00' FORMAT JSON ENCODING UTF16
+                     )
+    --> '[["text"],[5]]'
+
+You can also nest other JSON-returning functions. In that case, the ``FORMAT``
+option is implicit::
+
+    SELECT json_array(
+                      json_query('{"key" : [  "value"  ]}', 'lax $.key')
+                     )
+    --> '[["value"]]'
+
+Other passed values are cast to varchar, and they become JSON text literals::
+
+    SELECT json_array(
+                      DATE '2001-01-31',
+                      UUID '12151fd2-7586-11e9-8f9e-2a86e4085a59'
+                     )
+    --> '["2001-01-31","12151fd2-7586-11e9-8f9e-2a86e4085a59"]'
+
+You can omit the arguments altogether to get an empty array::
+
+    SELECT json_array() --> '[]'
+
+Null handling
+^^^^^^^^^^^^^
+
+If a value passed for an array element is ``null``, it is treated according to
+the specified null treatment option. If ``ABSENT ON NULL`` is specified, the
+null element is omitted in the result. If ``NULL ON NULL`` is specified, JSON
+``null`` is added to the result. ``ABSENT ON NULL`` is the default
+configuration::
+
+    SELECT json_array(true, null, 1)
+    --> '[true,1]'
+
+    SELECT json_array(true, null, 1 ABSENT ON NULL)
+    --> '[true,1]'
+
+    SELECT json_array(true, null, 1 NULL ON NULL)
+    --> '[true,null,1]'
+
+Returned type
+^^^^^^^^^^^^^
+
+The SQL standard imposes that there is no dedicated data type to represent JSON
+data in SQL. Instead, JSON data is represented as character or binary strings.
+By default, the ``json_array`` function returns varchar containing the textual
+representation of the JSON array. With the ``RETURNING`` clause, you can
+specify other character string type::
+
+    SELECT json_array(true, 1 RETURNING VARCHAR(100))
+    --> '[true,1]'
+
+You can also specify to use varbinary and the required encoding as return type.
+The default encoding is UTF8::
+
+    SELECT json_array(true, 1 RETURNING VARBINARY)
+    --> X'5b 74 72 75 65 2c 31 5d'
+
+    SELECT json_array(true, 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF8)
+    --> X'5b 74 72 75 65 2c 31 5d'
+
+    SELECT json_array(true, 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF16)
+    --> X'5b 00 74 00 72 00 75 00 65 00 2c 00 31 00 5d 00'
+
+    SELECT json_array(true, 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF32)
+    --> X'5b 00 00 00 74 00 00 00 72 00 00 00 75 00 00 00 65 00 00 00 2c 00 00 00 31 00 00 00 5d 00 00 00'
+
+.. _json-object:
+
+json_object
+-----------
+
+The ``json_object`` function creates a JSON object containing given key-value pairs.
+
+.. code-block:: text
+
+    JSON_OBJECT(
+        [ key_value [, ...]
+          [ { NULL ON NULL | ABSENT ON NULL } ] ],
+          [ { WITH UNIQUE [ KEYS ] | WITHOUT UNIQUE [ KEYS ] } ]
+        [ RETURNING type [ FORMAT JSON [ ENCODING { UTF8 | UTF16 | UTF32 } ] ] ]
+        )
+
+Argument passing conventions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+There are two conventions for passing keys and values::
+
+    SELECT json_object('key1' : 1, 'key2' : true)
+    --> '{"key1":1,"key2":true}'
+
+    SELECT json_object(KEY 'key1' VALUE 1, KEY 'key2' VALUE true)
+    --> '{"key1":1,"key2":true}'
+
+In the second convention, you can omit the ``KEY`` keyword::
+
+    SELECT json_object('key1' VALUE 1, 'key2' VALUE true)
+    --> '{"key1":1,"key2":true}'
+
+Argument types
+^^^^^^^^^^^^^^
+
+The keys can be arbitrary expressions. They must be of character string type.
+Each key is converted into a JSON text item, and it becomes a key in the
+created JSON object. Keys must not be null.
+
+The values can be arbitrary expressions. Each passed value is converted
+into a JSON item according to its type, and optional ``FORMAT`` and
+``ENCODING`` specification.
+
+You can pass SQL values of types boolean, numeric, and character string. They
+are converted to corresponding JSON literals::
+
+    SELECT json_object('x' : true, 'y' : 12e-1, 'z' : 'text')
+    --> '{"x":true,"y":1.2,"z":"text"}'
+
+Additionally to SQL values, you can pass JSON values. They are character or
+binary strings with a specified format and optional encoding::
+
+    SELECT json_object(
+                       'x' : '[  "text"  ] ' FORMAT JSON,
+                       'y' : X'5B0035005D00' FORMAT JSON ENCODING UTF16
+                      )
+    --> '{"x":["text"],"y":[5]}'
+
+You can also nest other JSON-returning functions. In that case, the ``FORMAT``
+option is implicit::
+
+    SELECT json_object(
+                       'x' : json_query('{"key" : [  "value"  ]}', 'lax $.key')
+                      )
+    --> '{"x":["value"]}'
+
+Other passed values are cast to varchar, and they become JSON text literals::
+
+    SELECT json_object(
+                       'x' : DATE '2001-01-31',
+                       'y' : UUID '12151fd2-7586-11e9-8f9e-2a86e4085a59'
+                      )
+    --> '{"x":"2001-01-31","y":"12151fd2-7586-11e9-8f9e-2a86e4085a59"}'
+
+You can omit the arguments altogether to get an empty object::
+
+    SELECT json_object() --> '{}'
+
+Null handling
+^^^^^^^^^^^^^
+
+The values passed for JSON object keys must not be null. It is allowed to pass
+``null`` for JSON object values. A null value is treated according to the
+specified null treatment option. If ``NULL ON NULL`` is specified, a JSON
+object entry with ``null`` value is added to the result. If ``ABSENT ON NULL``
+is specified, the entry is omitted in the result. ``NULL ON NULL`` is the
+default configuration.::
+
+    SELECT json_object('x' : null, 'y' : 1)
+    --> '{"x":null,"y":1}'
+
+    SELECT json_object('x' : null, 'y' : 1 NULL ON NULL)
+    --> '{"x":null,"y":1}'
+
+    SELECT json_object('x' : null, 'y' : 1 ABSENT ON NULL)
+    --> '{"y":1}'
+
+Key uniqueness
+^^^^^^^^^^^^^^
+
+If a duplicate key is encountered, it is handled according to the specified key
+uniqueness constraint.
+
+If ``WITH UNIQUE KEYS`` is specified, a duplicate key results in a query
+failure::
+
+    SELECT json_object('x' : null, 'x' : 1 WITH UNIQUE KEYS)
+    --> failure: "duplicate key passed to JSON_OBJECT function"
+
+Note that this option is not supported if any of the arguments has a
+``FORMAT`` specification.
+
+If ``WITHOUT UNIQUE KEYS`` is specified, duplicate keys are not supported due
+to implementation limitation. ``WITHOUT UNIQUE KEYS`` is the default
+configuration.
+
+Returned type
+^^^^^^^^^^^^^
+
+The SQL standard imposes that there is no dedicated data type to represent JSON
+data in SQL. Instead, JSON data is represented as character or binary strings.
+By default, the ``json_object`` function returns varchar containing the textual
+representation of the JSON object. With the ``RETURNING`` clause, you can
+specify other character string type::
+
+    SELECT json_object('x' : 1 RETURNING VARCHAR(100))
+    --> '{"x":1}'
+
+You can also specify to use varbinary and the required encoding as return type.
+The default encoding is UTF8::
+
+    SELECT json_object('x' : 1 RETURNING VARBINARY)
+    --> X'7b 22 78 22 3a 31 7d'
+
+    SELECT json_object('x' : 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF8)
+    --> X'7b 22 78 22 3a 31 7d'
+
+    SELECT json_object('x' : 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF16)
+    --> X'7b 00 22 00 78 00 22 00 3a 00 31 00 7d 00'
+
+    SELECT json_object('x' : 1 RETURNING VARBINARY FORMAT JSON ENCODING UTF32)
+    --> X'7b 00 00 00 22 00 00 00 78 00 00 00 22 00 00 00 3a 00 00 00 31 00 00 00 7d 00 00 00'
+
 .. warning::
 
     The following functions and operators are not compliant with the SQL
@@ -1242,7 +1527,7 @@ The following examples show the behavior of casting to JSON with these types::
     -- JSON '{"v1":123,"v2":"abc","v3":true}'
 
 Casting from NULL to ``JSON`` is not straightforward. Casting
-from a standalone ``NULL`` will produce a SQL ``NULL`` instead of
+from a standalone ``NULL`` will produce SQL ``NULL`` instead of
 ``JSON 'null'``. However, when casting from arrays or map containing
 ``NULL``\s, the produced ``JSON`` will have ``null``\s in it.
 
@@ -1309,8 +1594,12 @@ some cases. To address this, Trino supports partial casting of arrays and maps::
 
 When casting from ``JSON`` to ``ROW``, both JSON array and JSON object are supported.
 
-JSON functions
---------------
+Other JSON functions
+--------------------
+
+In addition to the functions explained in more details in the preceding
+sections, the following functions are available:
+
 .. function:: is_json_scalar(json) -> boolean
 
     Determine if ``json`` is a scalar (i.e. a JSON number, a JSON string, ``true``, ``false`` or ``null``)::
@@ -1368,6 +1657,9 @@ JSON functions
         SELECT json_extract(json, '$.store.book');
         SELECT json_extract(json, '$.store[book]');
         SELECT json_extract(json, '$.store["book name"]');
+
+    The :ref:`json_query function<json-query>` provides a more powerful and
+    feature-rich alternative to parse and extract JSON data.
 
     .. _JSONPath: http://goessner.net/articles/JsonPath/
 

@@ -54,9 +54,12 @@ import static io.trino.client.OkHttpUtil.tokenAuth;
 import static io.trino.jdbc.ConnectionProperties.ACCESS_TOKEN;
 import static io.trino.jdbc.ConnectionProperties.APPLICATION_NAME_PREFIX;
 import static io.trino.jdbc.ConnectionProperties.ASSUME_LITERAL_NAMES_IN_METADATA_CALLS_FOR_NON_CONFORMING_CLIENTS;
+import static io.trino.jdbc.ConnectionProperties.ASSUME_LITERAL_UNDERSCORE_IN_METADATA_CALLS_FOR_NON_CONFORMING_CLIENTS;
 import static io.trino.jdbc.ConnectionProperties.CLIENT_INFO;
 import static io.trino.jdbc.ConnectionProperties.CLIENT_TAGS;
 import static io.trino.jdbc.ConnectionProperties.DISABLE_COMPRESSION;
+import static io.trino.jdbc.ConnectionProperties.DNS_RESOLVER;
+import static io.trino.jdbc.ConnectionProperties.DNS_RESOLVER_CONTEXT;
 import static io.trino.jdbc.ConnectionProperties.EXTERNAL_AUTHENTICATION;
 import static io.trino.jdbc.ConnectionProperties.EXTERNAL_AUTHENTICATION_REDIRECT_HANDLERS;
 import static io.trino.jdbc.ConnectionProperties.EXTERNAL_AUTHENTICATION_TIMEOUT;
@@ -251,6 +254,12 @@ public final class TrinoDriverUri
         return ASSUME_LITERAL_NAMES_IN_METADATA_CALLS_FOR_NON_CONFORMING_CLIENTS.getValue(properties).orElse(false);
     }
 
+    public boolean isAssumeLiteralUnderscoreInMetadataCallsForNonConformingClients()
+            throws SQLException
+    {
+        return ASSUME_LITERAL_UNDERSCORE_IN_METADATA_CALLS_FOR_NON_CONFORMING_CLIENTS.getValue(properties).orElse(false);
+    }
+
     public void setupClient(OkHttpClient.Builder builder)
             throws SQLException
     {
@@ -341,12 +350,25 @@ public final class TrinoDriverUri
                 builder.authenticator(authenticator);
                 builder.addInterceptor(authenticator);
             }
+
+            Optional<String> resolverContext = DNS_RESOLVER_CONTEXT.getValue(properties);
+            DNS_RESOLVER.getValue(properties).ifPresent(resolverClass -> builder.dns(instantiateDnsResolver(resolverClass, resolverContext)::lookup));
         }
         catch (ClientException e) {
             throw new SQLException(e.getMessage(), e);
         }
         catch (RuntimeException e) {
             throw new SQLException("Error setting up connection", e);
+        }
+    }
+
+    private static DnsResolver instantiateDnsResolver(Class<? extends DnsResolver> resolverClass, Optional<String> context)
+    {
+        try {
+            return resolverClass.getConstructor(String.class).newInstance(context.orElse(null));
+        }
+        catch (ReflectiveOperationException e) {
+            throw new ClientException("Unable to instantiate custom DNS resolver " + resolverClass.getName(), e);
         }
     }
 

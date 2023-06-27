@@ -13,6 +13,7 @@
  */
 package io.trino.connector.system.jdbc;
 
+import com.google.inject.Inject;
 import io.trino.FullConnectorSession;
 import io.trino.Session;
 import io.trino.metadata.Metadata;
@@ -27,15 +28,13 @@ import io.trino.spi.connector.RecordCursor;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.predicate.TupleDomain;
 
-import javax.inject.Inject;
-
 import java.util.Optional;
 import java.util.Set;
 
 import static io.trino.connector.system.jdbc.FilterUtil.emptyOrEquals;
 import static io.trino.connector.system.jdbc.FilterUtil.tablePrefix;
 import static io.trino.connector.system.jdbc.FilterUtil.tryGetSingleVarcharValue;
-import static io.trino.metadata.MetadataListing.listCatalogs;
+import static io.trino.metadata.MetadataListing.listCatalogNames;
 import static io.trino.metadata.MetadataListing.listTables;
 import static io.trino.metadata.MetadataListing.listViews;
 import static io.trino.metadata.MetadataUtil.TableMetadataBuilder.tableMetadataBuilder;
@@ -99,7 +98,7 @@ public class TableJdbcTable
             return table.build().cursor();
         }
 
-        for (String catalog : listCatalogs(session, metadata, accessControl, catalogFilter).keySet()) {
+        for (String catalog : listCatalogNames(session, metadata, accessControl, catalogFilter)) {
             QualifiedTablePrefix prefix = tablePrefix(catalog, schemaFilter, tableFilter);
 
             Set<SchemaTableName> views = listViews(session, metadata, accessControl, prefix);

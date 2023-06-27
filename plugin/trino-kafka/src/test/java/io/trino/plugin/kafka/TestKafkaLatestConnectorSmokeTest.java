@@ -28,23 +28,31 @@ public class TestKafkaLatestConnectorSmokeTest
     protected QueryRunner createQueryRunner()
             throws Exception
     {
-        TestingKafka testingKafka = closeAfterClass(TestingKafka.create("6.0.1"));
+        TestingKafka testingKafka = closeAfterClass(TestingKafka.create("7.1.1"));
         return KafkaQueryRunner.builder(testingKafka)
                 .setTables(REQUIRED_TPCH_TABLES)
                 .build();
     }
 
+    @SuppressWarnings("DuplicateBranchesInSwitch")
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         switch (connectorBehavior) {
+            case SUPPORTS_DELETE:
+            case SUPPORTS_UPDATE:
+            case SUPPORTS_MERGE:
+                return false;
+
             case SUPPORTS_CREATE_SCHEMA:
                 return false;
 
             case SUPPORTS_CREATE_TABLE:
+            case SUPPORTS_RENAME_TABLE:
                 return false;
 
-            case SUPPORTS_RENAME_TABLE:
+            case SUPPORTS_CREATE_VIEW:
+            case SUPPORTS_CREATE_MATERIALIZED_VIEW:
                 return false;
 
             default:

@@ -14,6 +14,7 @@
 package io.trino.plugin.elasticsearch;
 
 import com.google.common.net.HostAndPort;
+import io.trino.testing.ResourcePresence;
 import org.testcontainers.containers.Network;
 import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -49,6 +50,7 @@ public class ElasticsearchServer
         container = new ElasticsearchContainer(dockerImageName);
         container.withNetwork(network);
         container.withNetworkAliases("elasticsearch-server");
+        container.withEnv("DISABLE_SECURITY_PLUGIN", "true"); // Required for OpenSearch container
 
         configurationPath = createTempDirectory(null);
         for (Map.Entry<String, String> entry : configurationFiles.entrySet()) {
@@ -68,6 +70,12 @@ public class ElasticsearchServer
     {
         container.close();
         deleteRecursively(configurationPath, ALLOW_INSECURE);
+    }
+
+    @ResourcePresence
+    public boolean isRunning()
+    {
+        return container.getContainerId() != null;
     }
 
     public HostAndPort getAddress()

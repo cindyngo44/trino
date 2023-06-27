@@ -15,33 +15,33 @@ package io.trino.metadata;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.trino.connector.CatalogName;
+import io.trino.spi.connector.CatalogHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
-import io.trino.spi.ptf.ConnectorTableFunctionHandle;
+import io.trino.spi.function.table.ConnectorTableFunctionHandle;
 
 import static java.util.Objects.requireNonNull;
 
 public class TableFunctionHandle
 {
-    private final CatalogName catalogName;
+    private final CatalogHandle catalogHandle;
     private final ConnectorTableFunctionHandle functionHandle;
     private final ConnectorTransactionHandle transactionHandle;
 
     @JsonCreator
     public TableFunctionHandle(
-            @JsonProperty("catalogName") CatalogName catalogName,
+            @JsonProperty("catalogHandle") CatalogHandle catalogHandle,
             @JsonProperty("functionHandle") ConnectorTableFunctionHandle functionHandle,
             @JsonProperty("transactionHandle") ConnectorTransactionHandle transactionHandle)
     {
-        this.catalogName = requireNonNull(catalogName, "catalogName is null");
+        this.catalogHandle = requireNonNull(catalogHandle, "catalogHandle is null");
         this.functionHandle = requireNonNull(functionHandle, "functionHandle is null");
         this.transactionHandle = requireNonNull(transactionHandle, "transactionHandle is null");
     }
 
     @JsonProperty
-    public CatalogName getCatalogName()
+    public CatalogHandle getCatalogHandle()
     {
-        return catalogName;
+        return catalogHandle;
     }
 
     @JsonProperty

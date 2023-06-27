@@ -21,7 +21,6 @@ import com.google.errorprone.annotations.FormatMethod;
 import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
-import io.trino.execution.Lifespan;
 import io.trino.memory.context.AggregatedMemoryContext;
 import io.trino.memory.context.LocalMemoryContext;
 import io.trino.memory.context.MemoryTrackingContext;
@@ -29,7 +28,6 @@ import io.trino.metadata.Split;
 import io.trino.operator.OperationTimer.OperationTiming;
 import io.trino.operator.WorkProcessor.ProcessState;
 import io.trino.spi.Page;
-import io.trino.spi.connector.UpdatablePageSource;
 import io.trino.spi.metrics.Metrics;
 import io.trino.spi.type.Type;
 import io.trino.sql.planner.LocalExecutionPlanner.OperatorFactoryWithTypes;
@@ -37,12 +35,13 @@ import io.trino.sql.planner.plan.PlanNodeId;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Throwables.throwIfUnchecked;
@@ -50,7 +49,6 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static io.airlift.units.DataSize.succinctBytes;
 import static io.trino.operator.BlockedReason.WAITING_FOR_MEMORY;
-import static io.trino.operator.OperatorContext.getConnectorMetrics;
 import static io.trino.operator.OperatorContext.getOperatorMetrics;
 import static io.trino.operator.PageUtils.recordMaterializedBytes;
 import static io.trino.operator.WorkProcessor.ProcessState.Type.BLOCKED;
@@ -58,6 +56,7 @@ import static io.trino.operator.WorkProcessor.ProcessState.Type.FINISHED;
 import static io.trino.operator.project.MergePages.mergePages;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class WorkProcessorPipelineSourceOperator
         implements SourceOperator
@@ -74,7 +73,7 @@ public class WorkProcessorPipelineSourceOperator
     private final OperationTimer timer;
     // operator instances including source operator
     private final List<WorkProcessorOperatorContext> workProcessorOperatorContexts = new ArrayList<>();
-    private final List<Split> pendingSplits = new ArrayList<>();
+    private final Deque<Split> pendingSplits = new ArrayDeque<>();
 
     private ListenableFuture<Void> blockedFuture;
     private WorkProcessorSourceOperator sourceOperator;
@@ -86,11 +85,10 @@ public class WorkProcessorPipelineSourceOperator
             DataSize minOutputPageSize,
             int minOutputPageRowCount)
     {
-        if (operatorFactoriesWithTypes.isEmpty() || !(operatorFactoriesWithTypes.get(0).getOperatorFactory() instanceof WorkProcessorSourceOperatorFactory)) {
+        if (operatorFactoriesWithTypes.isEmpty() || !(operatorFactoriesWithTypes.get(0).getOperatorFactory() instanceof WorkProcessorSourceOperatorFactory sourceOperatorFactory)) {
             return toOperatorFactories(operatorFactoriesWithTypes);
         }
 
-        WorkProcessorSourceOperatorFactory sourceOperatorFactory = (WorkProcessorSourceOperatorFactory) operatorFactoriesWithTypes.get(0).getOperatorFactory();
         ImmutableList.Builder<WorkProcessorOperatorFactory> workProcessorOperatorFactoriesBuilder = ImmutableList.builder();
         int operatorIndex = 1;
         for (; operatorIndex < operatorFactoriesWithTypes.size(); ++operatorIndex) {
@@ -148,7 +146,7 @@ public class WorkProcessorPipelineSourceOperator
         WorkProcessor<Split> splits = WorkProcessor.create(new Splits());
 
         sourceOperator = sourceOperatorFactory.create(
-                operatorContext.getSession(),
+                operatorContext,
                 sourceOperatorMemoryTrackingContext,
                 operatorContext.getDriverContext().getYieldSignal(),
                 splits);
@@ -324,7 +322,7 @@ public class WorkProcessorPipelineSourceOperator
 
                         succinctBytes(context.physicalInputDataSize.get()),
                         context.physicalInputPositions.get(),
-                        new Duration(context.operatorTiming.getWallNanos(), NANOSECONDS),
+                        new Duration(context.readTimeNanos.get(), NANOSECONDS),
 
                         succinctBytes(context.internalNetworkInputDataSize.get()),
                         context.internalNetworkInputPositions.get(),
@@ -343,8 +341,13 @@ public class WorkProcessorPipelineSourceOperator
                         context.outputPositions.get(),
 
                         context.dynamicFilterSplitsProcessed.get(),
-                        getOperatorMetrics(context.metrics.get(), context.inputPositions.get()),
-                        getConnectorMetrics(context.connectorMetrics.get(), context.readTimeNanos.get()),
+                        getOperatorMetrics(
+                                context.metrics.get(),
+                                context.inputPositions.get(),
+                                new Duration(context.operatorTiming.getCpuNanos(), NANOSECONDS).convertTo(SECONDS).getValue(),
+                                new Duration(context.operatorTiming.getWallNanos(), NANOSECONDS).convertTo(SECONDS).getValue(),
+                                new Duration(context.blockedWallNanos.get(), NANOSECONDS).convertTo(SECONDS).getValue()),
+                        context.connectorMetrics.get(),
 
                         DataSize.ofBytes(0),
 
@@ -384,21 +387,19 @@ public class WorkProcessorPipelineSourceOperator
     }
 
     @Override
-    public Supplier<Optional<UpdatablePageSource>> addSplit(Split split)
+    public void addSplit(Split split)
     {
         if (sourceOperator == null) {
-            return Optional::empty;
+            return;
         }
 
         Object splitInfo = split.getInfo();
         if (splitInfo != null) {
-            operatorContext.setInfoSupplier(Suppliers.ofInstance(new SplitOperatorInfo(split.getCatalogName(), splitInfo)));
+            operatorContext.setInfoSupplier(Suppliers.ofInstance(new SplitOperatorInfo(split.getCatalogHandle(), splitInfo)));
         }
 
         pendingSplits.add(split);
         blockedOnSplits.set(null);
-
-        return sourceOperator.getUpdatablePageSourceSupplier();
     }
 
     @Override
@@ -503,7 +504,7 @@ public class WorkProcessorPipelineSourceOperator
                 return ProcessState.blocked(blockedOnSplits);
             }
 
-            return ProcessState.ofResult(pendingSplits.remove(0));
+            return ProcessState.ofResult(pendingSplits.remove());
         }
     }
 
@@ -538,8 +539,7 @@ public class WorkProcessorPipelineSourceOperator
                 }
                 finally {
                     workProcessorOperatorContext.metrics.set(operator.getMetrics());
-                    if (operator instanceof WorkProcessorSourceOperator) {
-                        WorkProcessorSourceOperator sourceOperator = (WorkProcessorSourceOperator) operator;
+                    if (operator instanceof WorkProcessorSourceOperator sourceOperator) {
                         workProcessorOperatorContext.connectorMetrics.set(sourceOperator.getConnectorMetrics());
                     }
                     workProcessorOperatorContext.memoryTrackingContext.close();
@@ -561,7 +561,7 @@ public class WorkProcessorPipelineSourceOperator
     }
 
     @FormatMethod
-    private static Throwable handleOperatorCloseError(Throwable inFlightException, Throwable newException, String message, Object... args)
+    private static Throwable handleOperatorCloseError(Throwable inFlightException, Throwable newException, String message, final Object... args)
     {
         if (newException instanceof Error) {
             if (inFlightException == null) {
@@ -773,12 +773,6 @@ public class WorkProcessorPipelineSourceOperator
         {
             this.operatorFactories.forEach(WorkProcessorOperatorFactory::close);
             closed = true;
-        }
-
-        @Override
-        public void noMoreOperators(Lifespan lifespan)
-        {
-            this.operatorFactories.forEach(operatorFactory -> operatorFactory.lifespanFinished(lifespan));
         }
     }
 }

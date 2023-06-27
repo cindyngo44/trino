@@ -24,9 +24,9 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.containers.wait.strategy.WaitAllStrategy;
 
 import static io.trino.tests.product.launcher.env.EnvironmentContainers.TESTS;
-import static io.trino.tests.product.launcher.env.EnvironmentContainers.isPrestoContainer;
-import static io.trino.tests.product.launcher.env.common.Standard.CONTAINER_PRESTO_ETC;
+import static io.trino.tests.product.launcher.env.EnvironmentContainers.isTrinoContainer;
 import static io.trino.tests.product.launcher.env.common.Standard.CONTAINER_TEMPTO_PROFILE_CONFIG;
+import static io.trino.tests.product.launcher.env.common.Standard.CONTAINER_TRINO_ETC;
 import static java.util.Objects.requireNonNull;
 import static org.testcontainers.utility.MountableFile.forHostPath;
 
@@ -34,6 +34,8 @@ public class HydraIdentityProvider
         implements EnvironmentExtender
 {
     private static final int TTL_ACCESS_TOKEN_IN_SECONDS = 5;
+    private static final int TTL_REFRESH_TOKEN_IN_SECONDS = 15;
+
     private static final String HYDRA_IMAGE = "oryd/hydra:v1.10.6";
     private static final String DSN = "postgres://hydra:mysecretpassword@hydra-db:5432/hydra?sslmode=disable";
     private final PortBinder binder;
@@ -84,6 +86,7 @@ public class HydraIdentityProvider
                 .withEnv("SERVE_TLS_CERT_PATH", "/tmp/certs/hydra.pem")
                 .withEnv("STRATEGIES_ACCESS_TOKEN", "jwt")
                 .withEnv("TTL_ACCESS_TOKEN", TTL_ACCESS_TOKEN_IN_SECONDS + "s")
+                .withEnv("TTL_REFRESH_TOKEN", TTL_REFRESH_TOKEN_IN_SECONDS + "s")
                 .withEnv("OAUTH2_ALLOWED_TOP_LEVEL_CLAIMS", "groups")
                 .withCommand("serve", "all", "--dangerous-force-http")
                 .withCopyFileToContainer(forHostPath(configDir.getPath("cert/hydra.pem")), "/tmp/certs/hydra.pem")
@@ -101,14 +104,14 @@ public class HydraIdentityProvider
         builder.containerDependsOn(hydra.getLogicalName(), databaseContainer.getLogicalName());
 
         builder.configureContainers(dockerContainer -> {
-            if (isPrestoContainer(dockerContainer.getLogicalName())) {
+            if (isTrinoContainer(dockerContainer.getLogicalName())) {
                 dockerContainer
                         .withCopyFileToContainer(
                                 forHostPath(configDir.getPath("cert/trino.pem")),
-                                CONTAINER_PRESTO_ETC + "/trino.pem")
+                                CONTAINER_TRINO_ETC + "/trino.pem")
                         .withCopyFileToContainer(
                                 forHostPath(configDir.getPath("cert/hydra.pem")),
-                                CONTAINER_PRESTO_ETC + "/hydra.pem");
+                                CONTAINER_TRINO_ETC + "/hydra.pem");
             }
         });
 

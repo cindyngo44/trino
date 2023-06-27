@@ -18,8 +18,6 @@ import com.google.common.collect.ImmutableMap;
 import io.airlift.units.DataSize;
 import io.trino.SequencePageBuilder;
 import io.trino.Session;
-import io.trino.connector.CatalogName;
-import io.trino.execution.Lifespan;
 import io.trino.metadata.Split;
 import io.trino.operator.ScanFilterAndProjectOperator.ScanFilterAndProjectOperatorFactory;
 import io.trino.operator.project.CursorProcessor;
@@ -74,6 +72,7 @@ import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.sql.ExpressionTestUtils.createExpression;
 import static io.trino.sql.ExpressionTestUtils.getTypes;
 import static io.trino.sql.planner.TestingPlannerContext.PLANNER_CONTEXT;
+import static io.trino.testing.TestingHandles.TEST_CATALOG_HANDLE;
 import static io.trino.testing.TestingHandles.TEST_TABLE_HANDLE;
 import static io.trino.testing.TestingSplit.createLocalSplit;
 import static java.util.Locale.ENGLISH;
@@ -240,9 +239,7 @@ public class BenchmarkScanFilterAndProjectOperator
             if (dictionary) {
                 return SequencePageBuilder.createSequencePageWithDictionaryBlocks(types, positions);
             }
-            else {
-                return SequencePageBuilder.createSequencePage(types, positions);
-            }
+            return SequencePageBuilder.createSequencePage(types, positions);
         }
     }
 
@@ -253,7 +250,7 @@ public class BenchmarkScanFilterAndProjectOperator
         SourceOperator operator = (SourceOperator) context.getOperatorFactory().createOperator(driverContext);
 
         ImmutableList.Builder<Page> outputPages = ImmutableList.builder();
-        operator.addSplit(new Split(new CatalogName("test"), createLocalSplit(), Lifespan.taskWide()));
+        operator.addSplit(new Split(TEST_CATALOG_HANDLE, createLocalSplit()));
         operator.noMoreSplits();
 
         for (int loops = 0; !operator.isFinished() && loops < 1_000_000; loops++) {

@@ -17,6 +17,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 import io.airlift.drift.TException;
 import io.airlift.drift.client.DriftClient;
 import io.airlift.units.Duration;
@@ -36,7 +37,6 @@ import io.trino.spi.connector.ConnectorResolvedIndex;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableMetadata;
-import io.trino.spi.connector.ConnectorTableProperties;
 import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.ProjectionApplicationResult;
@@ -46,8 +46,6 @@ import io.trino.spi.connector.TableNotFoundException;
 import io.trino.spi.expression.ConnectorExpression;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.TypeManager;
-
-import javax.inject.Inject;
 
 import java.util.List;
 import java.util.Map;
@@ -161,15 +159,7 @@ public class ThriftMetadata
         if (tableMetadata.containsIndexableColumns(indexableColumns)) {
             return Optional.of(new ConnectorResolvedIndex(new ThriftIndexHandle(tableMetadata.getSchemaTableName(), tupleDomain, session), tupleDomain));
         }
-        else {
-            return Optional.empty();
-        }
-    }
-
-    @Override
-    public ConnectorTableProperties getTableProperties(ConnectorSession session, ConnectorTableHandle table)
-    {
-        return new ConnectorTableProperties();
+        return Optional.empty();
     }
 
     @Override
@@ -219,13 +209,8 @@ public class ThriftMetadata
 
     private ThriftTableMetadata getRequiredTableMetadata(SchemaTableName schemaTableName)
     {
-        Optional<ThriftTableMetadata> table = tableCache.getUnchecked(schemaTableName);
-        if (table.isEmpty()) {
-            throw new TableNotFoundException(schemaTableName);
-        }
-        else {
-            return table.get();
-        }
+        return tableCache.getUnchecked(schemaTableName)
+                .orElseThrow(() -> new TableNotFoundException(schemaTableName));
     }
 
     // this method makes actual thrift request and should be called only by cache load method

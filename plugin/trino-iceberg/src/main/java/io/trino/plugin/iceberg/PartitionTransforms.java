@@ -48,8 +48,6 @@ import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DateType.DATE;
 import static io.trino.spi.type.Decimals.encodeScaledValue;
 import static io.trino.spi.type.Decimals.encodeShortScaledValue;
-import static io.trino.spi.type.Decimals.isLongDecimal;
-import static io.trino.spi.type.Decimals.isShortDecimal;
 import static io.trino.spi.type.Decimals.readBigDecimal;
 import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.TimeType.TIME_MICROS;
@@ -78,85 +76,83 @@ public final class PartitionTransforms
 
     private PartitionTransforms() {}
 
-    public static ColumnTransform getColumnTransform(PartitionField field, Type type)
+    public static ColumnTransform getColumnTransform(PartitionField field, Type sourceType)
     {
         String transform = field.transform().toString();
 
         switch (transform) {
             case "identity":
-                return identity(type);
+                return identity(sourceType);
             case "year":
-                if (type.equals(DATE)) {
+                if (sourceType.equals(DATE)) {
                     return yearsFromDate();
                 }
-                if (type.equals(TIMESTAMP_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_MICROS)) {
                     return yearsFromTimestamp();
                 }
-                if (type.equals(TIMESTAMP_TZ_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_TZ_MICROS)) {
                     return yearsFromTimestampWithTimeZone();
                 }
                 throw new UnsupportedOperationException("Unsupported type for 'year': " + field);
             case "month":
-                if (type.equals(DATE)) {
+                if (sourceType.equals(DATE)) {
                     return monthsFromDate();
                 }
-                if (type.equals(TIMESTAMP_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_MICROS)) {
                     return monthsFromTimestamp();
                 }
-                if (type.equals(TIMESTAMP_TZ_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_TZ_MICROS)) {
                     return monthsFromTimestampWithTimeZone();
                 }
                 throw new UnsupportedOperationException("Unsupported type for 'month': " + field);
             case "day":
-                if (type.equals(DATE)) {
+                if (sourceType.equals(DATE)) {
                     return daysFromDate();
                 }
-                if (type.equals(TIMESTAMP_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_MICROS)) {
                     return daysFromTimestamp();
                 }
-                if (type.equals(TIMESTAMP_TZ_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_TZ_MICROS)) {
                     return daysFromTimestampWithTimeZone();
                 }
                 throw new UnsupportedOperationException("Unsupported type for 'day': " + field);
             case "hour":
-                if (type.equals(TIMESTAMP_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_MICROS)) {
                     return hoursFromTimestamp();
                 }
-                if (type.equals(TIMESTAMP_TZ_MICROS)) {
+                if (sourceType.equals(TIMESTAMP_TZ_MICROS)) {
                     return hoursFromTimestampWithTimeZone();
                 }
                 throw new UnsupportedOperationException("Unsupported type for 'hour': " + field);
             case "void":
-                return voidTransform(type);
+                return voidTransform(sourceType);
         }
 
         Matcher matcher = BUCKET_PATTERN.matcher(transform);
         if (matcher.matches()) {
             int count = parseInt(matcher.group(1));
-            return bucket(type, count);
+            return bucket(sourceType, count);
         }
 
         matcher = TRUNCATE_PATTERN.matcher(transform);
         if (matcher.matches()) {
             int width = parseInt(matcher.group(1));
-            if (type.equals(INTEGER)) {
+            if (sourceType.equals(INTEGER)) {
                 return truncateInteger(width);
             }
-            if (type.equals(BIGINT)) {
+            if (sourceType.equals(BIGINT)) {
                 return truncateBigint(width);
             }
-            if (isShortDecimal(type)) {
-                DecimalType decimal = (DecimalType) type;
-                return truncateShortDecimal(type, width, decimal);
+            if (sourceType instanceof DecimalType decimalType) {
+                if (decimalType.isShort()) {
+                    return truncateShortDecimal(sourceType, width, decimalType);
+                }
+                return truncateLongDecimal(sourceType, width, decimalType);
             }
-            if (isLongDecimal(type)) {
-                DecimalType decimal = (DecimalType) type;
-                return truncateLongDecimal(type, width, decimal);
-            }
-            if (type instanceof VarcharType) {
+            if (sourceType instanceof VarcharType) {
                 return truncateVarchar(width);
             }
-            if (type.equals(VARBINARY)) {
+            if (sourceType.equals(VARBINARY)) {
                 return truncateVarbinary(width);
             }
             throw new UnsupportedOperationException("Unsupported type for 'truncate': " + field);
@@ -167,7 +163,7 @@ public final class PartitionTransforms
 
     private static ColumnTransform identity(Type type)
     {
-        return new ColumnTransform(type, Function.identity(), ValueTransform.identity(type));
+        return new ColumnTransform(type, false, true, false, Function.identity(), ValueTransform.identity(type));
     }
 
     @VisibleForTesting
@@ -176,6 +172,9 @@ public final class PartitionTransforms
         Hasher hasher = getBucketingHash(type);
         return new ColumnTransform(
                 INTEGER,
+                false,
+                false,
+                false,
                 block -> bucketBlock(block, count, hasher),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -195,11 +194,11 @@ public final class PartitionTransforms
         if (type.equals(BIGINT)) {
             return PartitionTransforms::hashBigint;
         }
-        if (isShortDecimal(type)) {
-            return hashShortDecimal((DecimalType) type);
-        }
-        if (isLongDecimal(type)) {
-            return hashLongDecimal((DecimalType) type);
+        if (type instanceof DecimalType decimalType) {
+            if (decimalType.isShort()) {
+                return hashShortDecimal(decimalType);
+            }
+            return hashLongDecimal(decimalType);
         }
         if (type.equals(DATE)) {
             return PartitionTransforms::hashDate;
@@ -230,6 +229,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = value -> epochYear(DAYS.toMillis(value));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(DATE, INTEGER, block, transform),
                 ValueTransform.from(DATE, transform));
     }
@@ -239,6 +241,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = value -> epochMonth(DAYS.toMillis(value));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(DATE, INTEGER, block, transform),
                 ValueTransform.from(DATE, transform));
     }
@@ -248,6 +253,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = LongUnaryOperator.identity();
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(DATE, INTEGER, block, transform),
                 ValueTransform.from(DATE, transform));
     }
@@ -257,6 +265,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = epochMicros -> epochYear(floorDiv(epochMicros, MICROSECONDS_PER_MILLISECOND));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(TIMESTAMP_MICROS, INTEGER, block, transform),
                 ValueTransform.from(TIMESTAMP_MICROS, transform));
     }
@@ -266,6 +277,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = epochMicros -> epochMonth(floorDiv(epochMicros, MICROSECONDS_PER_MILLISECOND));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(TIMESTAMP_MICROS, INTEGER, block, transform),
                 ValueTransform.from(TIMESTAMP_MICROS, transform));
     }
@@ -275,6 +289,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = epochMicros -> epochDay(floorDiv(epochMicros, MICROSECONDS_PER_MILLISECOND));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(TIMESTAMP_MICROS, INTEGER, block, transform),
                 ValueTransform.from(TIMESTAMP_MICROS, transform));
     }
@@ -284,6 +301,9 @@ public final class PartitionTransforms
         LongUnaryOperator transform = epochMicros -> epochHour(floorDiv(epochMicros, MICROSECONDS_PER_MILLISECOND));
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> transformBlock(TIMESTAMP_MICROS, INTEGER, block, transform),
                 ValueTransform.from(TIMESTAMP_MICROS, transform));
     }
@@ -293,6 +313,9 @@ public final class PartitionTransforms
         ToLongFunction<LongTimestampWithTimeZone> transform = value -> epochYear(value.getEpochMillis());
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> extractTimestampWithTimeZone(block, transform),
                 ValueTransform.fromTimestampTzTransform(transform));
     }
@@ -302,6 +325,9 @@ public final class PartitionTransforms
         ToLongFunction<LongTimestampWithTimeZone> transform = value -> epochMonth(value.getEpochMillis());
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> extractTimestampWithTimeZone(block, transform),
                 ValueTransform.fromTimestampTzTransform(transform));
     }
@@ -311,6 +337,9 @@ public final class PartitionTransforms
         ToLongFunction<LongTimestampWithTimeZone> transform = value -> epochDay(value.getEpochMillis());
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> extractTimestampWithTimeZone(block, transform),
                 ValueTransform.fromTimestampTzTransform(transform));
     }
@@ -320,6 +349,9 @@ public final class PartitionTransforms
         ToLongFunction<LongTimestampWithTimeZone> transform = value -> epochHour(value.getEpochMillis());
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                true,
                 block -> extractTimestampWithTimeZone(block, transform),
                 ValueTransform.fromTimestampTzTransform(transform));
     }
@@ -340,7 +372,7 @@ public final class PartitionTransforms
 
     private static int hashInteger(Block block, int position)
     {
-        return bucketHash(INTEGER.getLong(block, position));
+        return bucketHash(INTEGER.getInt(block, position));
     }
 
     private static int hashBigint(Block block, int position)
@@ -368,7 +400,7 @@ public final class PartitionTransforms
 
     private static int hashDate(Block block, int position)
     {
-        return bucketHash(DATE.getLong(block, position));
+        return bucketHash(DATE.getInt(block, position));
     }
 
     private static int hashTime(Block block, int position)
@@ -431,6 +463,9 @@ public final class PartitionTransforms
     {
         return new ColumnTransform(
                 INTEGER,
+                false,
+                true,
+                false,
                 block -> truncateInteger(block, width),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -455,7 +490,7 @@ public final class PartitionTransforms
 
     private static long truncateInteger(Block block, int position, int width)
     {
-        long value = INTEGER.getLong(block, position);
+        long value = INTEGER.getInt(block, position);
         return value - ((value % width) + width) % width;
     }
 
@@ -463,6 +498,9 @@ public final class PartitionTransforms
     {
         return new ColumnTransform(
                 BIGINT,
+                false,
+                true,
+                false,
                 block -> truncateBigint(block, width),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -496,6 +534,9 @@ public final class PartitionTransforms
         BigInteger unscaledWidth = BigInteger.valueOf(width);
         return new ColumnTransform(
                 type,
+                false,
+                true,
+                false,
                 block -> truncateShortDecimal(decimal, block, unscaledWidth),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -531,6 +572,9 @@ public final class PartitionTransforms
         BigInteger unscaledWidth = BigInteger.valueOf(width);
         return new ColumnTransform(
                 type,
+                false,
+                true,
+                false,
                 block -> truncateLongDecimal(decimal, block, unscaledWidth),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -576,6 +620,9 @@ public final class PartitionTransforms
     {
         return new ColumnTransform(
                 VARCHAR,
+                false,
+                true,
+                false,
                 block -> truncateVarchar(block, width),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -615,6 +662,9 @@ public final class PartitionTransforms
     {
         return new ColumnTransform(
                 VARBINARY,
+                false,
+                true,
+                false,
                 block -> truncateVarbinary(block, width),
                 (block, position) -> {
                     if (block.isNull(position)) {
@@ -651,7 +701,10 @@ public final class PartitionTransforms
         Block nullBlock = nativeValueToBlock(type, null);
         return new ColumnTransform(
                 type,
-                block -> new RunLengthEncodedBlock(nullBlock, block.getPositionCount()),
+                true,
+                true,
+                false,
+                block -> RunLengthEncodedBlock.create(nullBlock, block.getPositionCount()),
                 (block, position) -> null);
     }
 
@@ -672,7 +725,7 @@ public final class PartitionTransforms
     @VisibleForTesting
     static long epochYear(long epochMilli)
     {
-        return YEAR_FIELD.get(epochMilli) - 1970;
+        return YEAR_FIELD.get(epochMilli) - 1970L;
     }
 
     @VisibleForTesting
@@ -703,19 +756,43 @@ public final class PartitionTransforms
     public static class ColumnTransform
     {
         private final Type type;
+        private final boolean preservesNonNull;
+        private final boolean monotonic;
+        private final boolean temporal;
         private final Function<Block, Block> blockTransform;
         private final ValueTransform valueTransform;
 
-        public ColumnTransform(Type type, Function<Block, Block> blockTransform, ValueTransform valueTransform)
+        public ColumnTransform(Type type, boolean preservesNonNull, boolean monotonic, boolean temporal, Function<Block, Block> blockTransform, ValueTransform valueTransform)
         {
             this.type = requireNonNull(type, "type is null");
+            this.preservesNonNull = preservesNonNull;
+            this.monotonic = monotonic;
+            this.temporal = temporal;
             this.blockTransform = requireNonNull(blockTransform, "transform is null");
             this.valueTransform = requireNonNull(valueTransform, "valueTransform is null");
         }
 
+        /**
+         * Result type.
+         */
         public Type getType()
         {
             return type;
+        }
+
+        public boolean preservesNonNull()
+        {
+            return preservesNonNull;
+        }
+
+        public boolean isMonotonic()
+        {
+            return monotonic;
+        }
+
+        public boolean isTemporal()
+        {
+            return temporal;
         }
 
         public Function<Block, Block> getBlockTransform()

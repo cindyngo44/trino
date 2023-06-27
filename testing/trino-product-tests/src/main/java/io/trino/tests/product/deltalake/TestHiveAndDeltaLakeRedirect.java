@@ -15,7 +15,9 @@ package io.trino.tests.product.deltalake;
 
 import com.google.common.collect.ImmutableList;
 import io.trino.tempto.assertions.QueryAssert.Row;
+import io.trino.tempto.query.QueryExecutionException;
 import io.trino.tempto.query.QueryResult;
+import io.trino.testng.services.Flaky;
 import org.assertj.core.api.AbstractStringAssert;
 import org.assertj.core.api.Assertions;
 import org.assertj.core.api.Condition;
@@ -29,29 +31,32 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.trino.tempto.assertions.QueryAssert.Row.row;
 import static io.trino.tempto.assertions.QueryAssert.assertQueryFailure;
-import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tempto.query.QueryExecutor.param;
+import static io.trino.testing.TestingNames.randomNameSuffix;
 import static io.trino.tests.product.TestGroups.DELTA_LAKE_DATABRICKS;
 import static io.trino.tests.product.TestGroups.DELTA_LAKE_OSS;
 import static io.trino.tests.product.TestGroups.PROFILE_SPECIFIC_TESTS;
-import static io.trino.tests.product.hive.util.TemporaryHiveTable.randomTableSuffix;
+import static io.trino.tests.product.deltalake.util.DeltaLakeTestUtils.DATABRICKS_COMMUNICATION_FAILURE_ISSUE;
+import static io.trino.tests.product.deltalake.util.DeltaLakeTestUtils.DATABRICKS_COMMUNICATION_FAILURE_MATCH;
+import static io.trino.tests.product.deltalake.util.DeltaLakeTestUtils.dropDeltaTableWithRetry;
 import static io.trino.tests.product.utils.QueryExecutors.onDelta;
 import static io.trino.tests.product.utils.QueryExecutors.onTrino;
 import static java.lang.String.format;
 import static java.sql.JDBCType.VARCHAR;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestHiveAndDeltaLakeRedirect
         extends BaseTestDeltaLakeS3Storage
 {
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaRedirect()
     {
-        String tableName = "redirect_to_delta_" + randomTableSuffix();
+        String tableName = "test_redirect_to_delta_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, false));
+        onDelta().executeQuery(createTableOnDelta(tableName, false));
 
         try {
             QueryResult databricksResult = onDelta().executeQuery("SELECT * FROM " + tableName);
@@ -61,54 +66,60 @@ public class TestHiveAndDeltaLakeRedirect
                     .collect(toImmutableList()));
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaNonDefaultSchemaRedirect()
     {
-        String tableName = "redirect_to_delta_non_default_schema_" + randomTableSuffix();
+        String schemaName = "test_extraordinary_" + randomNameSuffix();
+        String tableName = "test_redirect_to_delta_non_default_schema_" + randomNameSuffix();
 
-        onDelta().executeQuery("CREATE SCHEMA IF NOT EXISTS extraordinary");
-        onDelta().executeQuery(createTableInDatabricks("extraordinary", tableName, false));
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        onDelta().executeQuery(format("CREATE SCHEMA IF NOT EXISTS %s LOCATION \"%s\"", schemaName, schemaLocation));
+        onDelta().executeQuery(createTableOnDelta(schemaName, tableName, false));
         try {
-            QueryResult databricksResult = onDelta().executeQuery("SELECT * FROM extraordinary." + tableName);
-            QueryResult hiveResult = onTrino().executeQuery(format("SELECT * FROM hive.extraordinary.\"%s\"", tableName));
+            QueryResult databricksResult = onDelta().executeQuery(format("SELECT * FROM %s.%s", schemaName, tableName));
+            QueryResult hiveResult = onTrino().executeQuery(format("SELECT * FROM hive.%s.\"%s\"", schemaName, tableName));
             assertThat(databricksResult).containsOnly(hiveResult.rows().stream()
                     .map(Row::new)
                     .collect(toImmutableList()));
         }
         finally {
-            onDelta().executeQuery("DROP TABLE extraordinary." + tableName);
+            dropDeltaTableWithRetry(format("%s.%s", schemaName, tableName));
+            onDelta().executeQuery("DROP SCHEMA " + schemaName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToNonexistentDeltaCatalogRedirectFailure()
     {
-        String tableName = "redirect_to_nonexistent_delta_" + randomTableSuffix();
+        String tableName = "test_redirect_to_nonexistent_delta_" + randomNameSuffix();
 
         try {
-            onDelta().executeQuery(createTableInDatabricks(tableName, false));
+            onDelta().executeQuery(createTableOnDelta(tableName, false));
 
             onTrino().executeQuery("SET SESSION hive.delta_lake_catalog_name = 'epsilon'");
 
             assertQueryFailure(() -> onTrino().executeQuery(format("SELECT * FROM hive.default.\"%s\"", tableName)))
-                    .hasMessageMatching(".*Table 'hive.default.redirect_to_nonexistent_delta_.*' redirected to 'epsilon.default.redirect_to_nonexistent_delta_.*', but the target catalog 'epsilon' does not exist");
+                    .hasMessageMatching(".*Table 'hive.default.test_redirect_to_nonexistent_delta_.*' redirected to 'epsilon.default.test_redirect_to_nonexistent_delta_.*', but the target catalog 'epsilon' does not exist");
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     // Note: this tests engine more than connectors. Still good scenario to test.
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaRedirectWithDefaultSchemaInSession()
     {
-        String tableName = "redirect_to_delta_with_use_" + randomTableSuffix();
+        String tableName = "test_redirect_to_delta_with_use_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, false));
+        onDelta().executeQuery(createTableOnDelta(tableName, false));
 
         try {
             onTrino().executeQuery("USE hive.default");
@@ -120,48 +131,51 @@ public class TestHiveAndDeltaLakeRedirect
                     .collect(toImmutableList()));
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToUnpartitionedDeltaPartitionsRedirectFailure()
     {
-        String tableName = "delta_lake_unpartitioned_table_" + randomTableSuffix();
+        String tableName = "test_delta_lake_unpartitioned_table_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, false));
+        onDelta().executeQuery(createTableOnDelta(tableName, false));
 
         try {
             assertQueryFailure(() -> onTrino().executeQuery(format("SELECT * FROM hive.default.\"%s$partitions\"", tableName)))
-                    .hasMessageMatching(".*Table 'hive.default.delta_lake_unpartitioned_table_.*\\$partitions' redirected to 'delta.default.delta_lake_unpartitioned_table_.*\\$partitions', " +
-                            "but the target table 'delta.default.delta_lake_unpartitioned_table_.*\\$partitions' does not exist");
+                    .hasMessageMatching(".*Table 'hive.default.test_delta_lake_unpartitioned_table_.*\\$partitions' redirected to 'delta.default.test_delta_lake_unpartitioned_table_.*\\$partitions', " +
+                            "but the target table 'delta.default.test_delta_lake_unpartitioned_table_.*\\$partitions' does not exist");
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToPartitionedDeltaPartitionsRedirectFailure()
     {
-        String tableName = "delta_lake_partitioned_table_" + randomTableSuffix();
+        String tableName = "test_delta_lake_partitioned_table_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
             assertQueryFailure(() -> onTrino().executeQuery(format("SELECT * FROM hive.default.\"%s$partitions\"", tableName)))
-                    .hasMessageMatching(".*Table 'hive.default.delta_lake_partitioned_table_.*\\$partitions' redirected to 'delta.default.delta_lake_partitioned_table_.*\\$partitions', " +
-                            "but the target table 'delta.default.delta_lake_partitioned_table_.*\\$partitions' does not exist");
+                    .hasMessageMatching(".*Table 'hive.default.test_delta_lake_partitioned_table_.*\\$partitions' redirected to 'delta.default.test_delta_lake_partitioned_table_.*\\$partitions', " +
+                            "but the target table 'delta.default.test_delta_lake_partitioned_table_.*\\$partitions' does not exist");
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveRedirect()
     {
-        String tableName = "redirect_to_hive_" + randomTableSuffix();
+        String tableName = "test_redirect_to_hive_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, false));
 
@@ -183,13 +197,16 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveNonDefaultSchemaRedirect()
     {
-        String tableName = "redirect_to_hive_non_default_schema_" + randomTableSuffix();
+        String schemaName = "test_extraordinary" + randomNameSuffix();
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        String tableName = "test_redirect_to_hive_non_default_schema_" + randomNameSuffix();
 
-        onTrino().executeQuery("CREATE SCHEMA IF NOT EXISTS hive.extraordinary");
+        onTrino().executeQuery(format("CREATE SCHEMA IF NOT EXISTS hive.%s WITH (location='%s')", schemaName, schemaLocation));
 
-        onTrino().executeQuery(createTableInHiveConnector("extraordinary", tableName, false));
+        onTrino().executeQuery(createTableInHiveConnector(schemaName, tableName, false));
 
         try {
             List<Row> expectedResults = ImmutableList.of(
@@ -198,20 +215,22 @@ public class TestHiveAndDeltaLakeRedirect
                     row(3, false, 0),
                     row(4, false, 1),
                     row(5, true, 37));
-            QueryResult deltaResult = onTrino().executeQuery(format("SELECT * FROM delta.extraordinary.\"%s\"", tableName));
-            QueryResult hiveResult = onTrino().executeQuery(format("SELECT * FROM hive.extraordinary.\"%s\"", tableName));
+            QueryResult deltaResult = onTrino().executeQuery(format("SELECT * FROM delta.%s.\"%s\"", schemaName, tableName));
+            QueryResult hiveResult = onTrino().executeQuery(format("SELECT * FROM hive.%s.\"%s\"", schemaName, tableName));
             assertThat(deltaResult).containsOnly(expectedResults);
             assertThat(hiveResult).containsOnly(expectedResults);
         }
         finally {
-            onTrino().executeQuery("DROP TABLE hive.extraordinary." + tableName);
+            onTrino().executeQuery(format("DROP TABLE hive.%s.%s", schemaName, tableName));
+            onTrino().executeQuery("DROP SCHEMA " + schemaName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToNonexistentHiveCatalogRedirectFailure()
     {
-        String tableName = "redirect_to_nonexistent_hive_" + randomTableSuffix();
+        String tableName = "test_redirect_to_nonexistent_hive_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, false));
 
@@ -219,7 +238,7 @@ public class TestHiveAndDeltaLakeRedirect
             onTrino().executeQuery("SET SESSION delta.hive_catalog_name = 'spark'");
 
             assertQueryFailure(() -> onTrino().executeQuery(format("SELECT * FROM delta.default.\"%s\"", tableName)))
-                    .hasMessageMatching(".*Table 'delta.default.redirect_to_nonexistent_hive_.*' redirected to 'spark.default.redirect_to_nonexistent_hive_.*', but the target catalog 'spark' does not exist");
+                    .hasMessageMatching(".*Table 'delta.default.test_redirect_to_nonexistent_hive_.*' redirected to 'spark.default.test_redirect_to_nonexistent_hive_.*', but the target catalog 'spark' does not exist");
         }
         finally {
             onTrino().executeQuery("DROP TABLE hive.default." + tableName);
@@ -228,9 +247,10 @@ public class TestHiveAndDeltaLakeRedirect
 
     // Note: this tests engine more than connectors. Still good scenario to test.
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveRedirectWithDefaultSchemaInSession()
     {
-        String tableName = "redirect_to_hive_with_use_" + randomTableSuffix();
+        String tableName = "test_redirect_to_hive_with_use_" + randomNameSuffix();
 
         onTrino().executeQuery("USE hive.default");
 
@@ -254,9 +274,10 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToPartitionedHivePartitionsRedirect()
     {
-        String tableName = "hive_partitioned_table_" + randomTableSuffix();
+        String tableName = "test_hive_partitioned_table_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
 
@@ -278,15 +299,16 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToUnpartitionedHivePartitionsRedirectFailure()
     {
-        String tableName = "hive_unpartitioned_table_" + randomTableSuffix();
+        String tableName = "test_hive_unpartitioned_table_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, false));
 
         try {
             assertQueryFailure(() -> onTrino().executeQuery(format("SELECT * FROM delta.default.\"%s$partitions\"", tableName)))
-                    .hasMessageMatching(".*Table 'delta.default.hive_unpartitioned_table.*partitions' does not exist");
+                    .hasMessageMatching(".*Table 'delta.default.test_hive_unpartitioned_table.*partitions' does not exist");
         }
         finally {
             onTrino().executeQuery("DROP TABLE hive.default." + tableName);
@@ -294,9 +316,10 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveInsert()
     {
-        String tableName = "hive_insert_by_delta_" + randomTableSuffix();
+        String tableName = "test_hive_insert_by_delta_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
 
@@ -323,11 +346,12 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaInsert()
     {
-        String tableName = "delta_insert_by_hive_" + randomTableSuffix();
+        String tableName = "test_delta_insert_by_hive_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
             onTrino().executeQuery(format("INSERT INTO hive.default.\"%s\" VALUES (1234567890, 'San Escobar', 5, 'If I had a world of my own, everything would be nonsense')", tableName));
@@ -336,14 +360,15 @@ public class TestHiveAndDeltaLakeRedirect
             assertThat(onTrino().executeQuery(format("SELECT count(*) FROM hive.default.\"%s\"", tableName))).containsOnly(row(5));
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveDescribe()
     {
-        String tableName = "hive_describe_by_delta_" + randomTableSuffix();
+        String tableName = "test_hive_describe_by_delta_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
 
@@ -361,11 +386,12 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaDescribe()
     {
-        String tableName = "delta_describe_by_hive_" + randomTableSuffix();
+        String tableName = "test_delta_describe_by_hive_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
             List<Row> expectedResults = ImmutableList.of(
@@ -377,14 +403,15 @@ public class TestHiveAndDeltaLakeRedirect
                     .containsOnly(expectedResults);
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveShowCreateTable()
     {
-        String tableName = "hive_show_create_table_by_delta_" + randomTableSuffix();
+        String tableName = "test_hive_show_create_table_by_delta_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
 
@@ -398,30 +425,39 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaShowCreateTable()
     {
-        String tableName = "delta_show_create_table_by_hive_" + randomTableSuffix();
+        String tableName = "test_delta_show_create_table_by_hive_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
             assertThat(onTrino().executeQuery(format("SHOW CREATE TABLE hive.default.\"%s\"", tableName)))
                     .hasRowsCount(1);
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveAlterTable()
     {
-        String tableName = "hive_alter_table_by_delta_" + randomTableSuffix();
+        String tableName = "test_hive_alter_table_by_delta_" + randomNameSuffix();
         // TODO set the partitioning for the table to `true` after the fix of https://github.com/trinodb/trino/issues/11826
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, false));
         String newTableName = tableName + "_new";
         try {
             onTrino().executeQuery("ALTER TABLE delta.default." + tableName + " RENAME TO " + newTableName);
+        }
+        catch (QueryExecutionException e) {
+            onTrino().executeQuery("DROP TABLE hive.default." + tableName);
+            throw e;
+        }
+
+        try {
             assertResultsEqual(
                     onTrino().executeQuery("TABLE hive.default." + newTableName),
                     onTrino().executeQuery("TABLE delta.default." + newTableName));
@@ -432,30 +468,34 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaAlterTable()
     {
-        String tableName = "delta_alter_table_by_hive_" + randomTableSuffix();
+        String tableName = "test_delta_alter_table_by_hive_" + randomNameSuffix();
+        String newTableName = tableName + "_new";
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
-            assertQueryFailure(() -> onTrino().executeQuery("ALTER TABLE hive.default.\"" + tableName + "\" RENAME TO \"" + tableName + "_new\""))
-                    .hasMessageMatching(".*This connector does not support renaming tables");
+            onTrino().executeQuery("ALTER TABLE hive.default.\"" + tableName + "\" RENAME TO \"" + newTableName + "\"");
+            dropDeltaTableWithRetry(newTableName);
         }
-        finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+        catch (QueryExecutionException e) {
+            dropDeltaTableWithRetry(tableName);
+            throw e;
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testDeltaToHiveCommentTable()
     {
-        String tableName = "hive_comment_table_by_delta_" + randomTableSuffix();
+        String tableName = "test_hive_comment_table_by_delta_" + randomNameSuffix();
 
         onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
         try {
             assertThat(onTrino().executeQuery("SELECT comment FROM system.metadata.table_comments WHERE catalog_name = 'hive' AND schema_name = 'default' AND table_name = '" + tableName + "'"))
-                    .is(new Condition<>(queryResult -> queryResult.row(0).get(0) == null, "Unexpected table comment"));
+                    .is(new Condition<>(queryResult -> queryResult.getOnlyValue() == null, "Unexpected table comment"));
             String tableComment = "This is my table, there are many like it but this one is mine";
             onTrino().executeQuery(format("COMMENT ON TABLE delta.default.\"" + tableName + "\" IS '%s'", tableComment));
 
@@ -468,31 +508,84 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testHiveToDeltaCommentTable()
     {
-        String tableName = "delta_comment_table_by_hive_" + randomTableSuffix();
+        String tableName = "test_delta_comment_table_by_hive_" + randomNameSuffix();
 
-        onDelta().executeQuery(createTableInDatabricks(tableName, true));
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
 
         try {
             assertThat(onTrino().executeQuery("SELECT comment FROM system.metadata.table_comments WHERE catalog_name = 'delta' AND schema_name = 'default' AND table_name = '" + tableName + "'"))
-                    .is(new Condition<>(queryResult -> queryResult.row(0).get(0) == null, "Unexpected table comment"));
-            assertQueryFailure(() -> onTrino().executeQuery("COMMENT ON TABLE hive.default.\"" + tableName + "\" IS 'This is my table, there are many like it but this one is mine'"))
-                    .hasMessageMatching(".*This connector does not support setting table comments");
+                    .is(new Condition<>(queryResult -> queryResult.getOnlyValue() == null, "Unexpected table comment"));
+
+            String tableComment = "This is my table, there are many like it but this one is mine";
+            onTrino().executeQuery(format("COMMENT ON TABLE hive.default.\"" + tableName + "\" IS '%s'", tableComment));
+            assertTableComment("hive", "default", tableName).isEqualTo(tableComment);
+            assertTableComment("delta", "default", tableName).isEqualTo(tableComment);
         }
         finally {
-            onDelta().executeQuery("DROP TABLE " + tableName);
+            dropDeltaTableWithRetry(tableName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
+    public void testDeltaToHiveCommentColumn()
+    {
+        String tableName = "test_hive_comment_column_by_delta_" + randomNameSuffix();
+        String columnName = "id";
+
+        onTrino().executeQuery(createTableInHiveConnector("default", tableName, true));
+        try {
+            assertColumnComment("hive", "default", tableName, columnName).isNull();
+            assertColumnComment("delta", "default", tableName, columnName).isNull();
+
+            String columnComment = "Internal identifier";
+            onTrino().executeQuery(format("COMMENT ON COLUMN delta.default.%s.%s IS '%s'", tableName, columnName, columnComment));
+
+            assertColumnComment("hive", "default", tableName, columnName).isEqualTo(columnComment);
+            assertColumnComment("delta", "default", tableName, columnName).isEqualTo(columnComment);
+        }
+        finally {
+            onTrino().executeQuery("DROP TABLE hive.default." + tableName);
+        }
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
+    public void testHiveToDeltaCommentColumn()
+    {
+        String tableName = "test_delta_comment_column_by_hive_" + randomNameSuffix();
+        String columnName = "nationkey";
+
+        onDelta().executeQuery(createTableOnDelta(tableName, true));
+
+        try {
+            assertColumnComment("hive", "default", tableName, columnName).isNull();
+            assertColumnComment("delta", "default", tableName, columnName).isNull();
+
+            String columnComment = "Internal identifier for the nation";
+            onTrino().executeQuery(format("COMMENT ON COLUMN hive.default.%s.%s IS '%s'", tableName, columnName, columnComment));
+
+            assertColumnComment("hive", "default", tableName, columnName).isEqualTo(columnComment);
+            assertColumnComment("delta", "default", tableName, columnName).isEqualTo(columnComment);
+        }
+        finally {
+            dropDeltaTableWithRetry(tableName);
+        }
+    }
+
+    @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testInsertIntoDeltaTableFromHiveNonDefaultSchemaRedirect()
     {
-        String destSchema = "extraordinary";
-        String destTableName = "create_delta_table_from_hive_non_default_schema_" + randomTableSuffix();
+        String destSchema = "test_extraordinary_" + randomNameSuffix();
+        String destTableName = "test_create_delta_table_from_hive_non_default_schema_" + randomNameSuffix();
 
-        onDelta().executeQuery("CREATE SCHEMA IF NOT EXISTS extraordinary");
-        onDelta().executeQuery(createTableInDatabricks(destSchema, destTableName, false));
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, destSchema);
+        onDelta().executeQuery(format("CREATE SCHEMA IF NOT EXISTS %s LOCATION \"%s\"", destSchema, schemaLocation));
+        onDelta().executeQuery(createTableOnDelta(destSchema, destTableName, false));
 
         try {
             onTrino().executeQuery(format("INSERT INTO hive.%s.\"%s\" (nationkey, name, regionkey) VALUES (26, 'POLAND', 3)", destSchema, destTableName));
@@ -514,20 +607,23 @@ public class TestHiveAndDeltaLakeRedirect
                     .containsOnly(expectedDestinationTableRows);
         }
         finally {
-            onDelta().executeQuery("DROP TABLE extraordinary." + destTableName);
+            dropDeltaTableWithRetry(format("%s.%s", destSchema, destTableName));
+            onTrino().executeQuery("DROP SCHEMA " + destSchema);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testInformationSchemaColumnsHiveToDeltaRedirect()
     {
         // use dedicated schema so we control the number and shape of tables
-        String schemaName = "redirect_to_delta_information_schema_columns_schema_" + randomTableSuffix();
-        onTrino().executeQuery("CREATE SCHEMA IF NOT EXISTS hive." + schemaName);
+        String schemaName = "test_redirect_to_delta_information_schema_columns_schema_" + randomNameSuffix();
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        onTrino().executeQuery(format("CREATE SCHEMA IF NOT EXISTS hive.%s WITH (location = '%s')", schemaName, schemaLocation));
 
-        String tableName = "redirect_to_delta_information_schema_columns_table_" + randomTableSuffix();
+        String tableName = "redirect_to_delta_information_schema_columns_table_" + randomNameSuffix();
         try {
-            onDelta().executeQuery(createTableInDatabricks(schemaName, tableName, false));
+            onDelta().executeQuery(createTableOnDelta(schemaName, tableName, false));
 
             // via redirection with table filter
             assertThat(onTrino().executeQuery(
@@ -557,19 +653,21 @@ public class TestHiveAndDeltaLakeRedirect
                             row("delta", schemaName, tableName, "comment", 4, null, "YES", "varchar"));
         }
         finally {
-            onDelta().executeQuery(format("DROP TABLE IF EXISTS %s.%s", schemaName, tableName));
+            dropDeltaTableWithRetry(format("%s.%s", schemaName, tableName));
             onTrino().executeQuery("DROP SCHEMA " + schemaName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testInformationSchemaColumnsDeltaToHiveRedirect()
     {
         // use dedicated schema so we control the number and shape of tables
-        String schemaName = "redirect_to_hive_information_schema_columns_schema_" + randomTableSuffix();
-        onTrino().executeQuery("CREATE SCHEMA IF NOT EXISTS hive." + schemaName);
+        String schemaName = "test_redirect_to_hive_information_schema_columns_schema_" + randomNameSuffix();
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        onTrino().executeQuery(format("CREATE SCHEMA IF NOT EXISTS hive.%s WITH (location='%s')", schemaName, schemaLocation));
 
-        String tableName = "redirect_to_hive_information_schema_columns_table_" + randomTableSuffix();
+        String tableName = "test_redirect_to_hive_information_schema_columns_table_" + randomNameSuffix();
         try {
             onTrino().executeQuery(createTableInHiveConnector(schemaName, tableName, false));
 
@@ -604,15 +702,17 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testSystemJdbcColumnsHiveToDeltaRedirect()
     {
         // use dedicated schema so we control the number and shape of tables
-        String schemaName = "redirect_to_delta_system_jdbc_columns_schema_" + randomTableSuffix();
-        onTrino().executeQuery("CREATE SCHEMA IF NOT EXISTS hive." + schemaName);
+        String schemaName = "test_redirect_to_delta_system_jdbc_columns_schema_" + randomNameSuffix();
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        onTrino().executeQuery(format("CREATE SCHEMA IF NOT EXISTS hive.%s WITH (location='%s')", schemaName, schemaLocation));
 
-        String tableName = "redirect_to_delta_system_jdbc_columns_table_" + randomTableSuffix();
+        String tableName = "test_redirect_to_delta_system_jdbc_columns_table_" + randomNameSuffix();
         try {
-            onDelta().executeQuery(createTableInDatabricks(schemaName, tableName, false));
+            onDelta().executeQuery(createTableOnDelta(schemaName, tableName, false));
 
             // via redirection with table filter
             assertThat(onTrino().executeQuery(
@@ -643,19 +743,21 @@ public class TestHiveAndDeltaLakeRedirect
                             row("delta", schemaName, tableName, "comment"));
         }
         finally {
-            onDelta().executeQuery(format("DROP TABLE IF EXISTS %s.%s", schemaName, tableName));
+            dropDeltaTableWithRetry(format("%s.%s", schemaName, tableName));
             onTrino().executeQuery("DROP SCHEMA " + schemaName);
         }
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS})
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testSystemJdbcColumnsDeltaToHiveRedirect()
     {
         // use dedicated schema so we control the number and shape of tables
-        String schemaName = "redirect_to_hive_system_jdbc_columns_schema_" + randomTableSuffix();
-        onTrino().executeQuery("CREATE SCHEMA IF NOT EXISTS hive." + schemaName);
+        String schemaName = "test_redirect_to_hive_system_jdbc_columns_schema_" + randomNameSuffix();
+        String schemaLocation = format("s3://%s/delta-redirect-test-%s", bucketName, schemaName);
+        onTrino().executeQuery(format("CREATE SCHEMA IF NOT EXISTS hive.%s WITH (location='%s')", schemaName, schemaLocation));
 
-        String tableName = "redirect_to_hive_system_jdbc_columns_table_" + randomTableSuffix();
+        String tableName = "test_redirect_to_hive_system_jdbc_columns_table_" + randomNameSuffix();
         try {
             onTrino().executeQuery(createTableInHiveConnector(schemaName, tableName, false));
 
@@ -690,12 +792,13 @@ public class TestHiveAndDeltaLakeRedirect
     }
 
     @Test(groups = {DELTA_LAKE_DATABRICKS, DELTA_LAKE_OSS, PROFILE_SPECIFIC_TESTS}, dataProvider = "trueFalse")
+    @Flaky(issue = DATABRICKS_COMMUNICATION_FAILURE_ISSUE, match = DATABRICKS_COMMUNICATION_FAILURE_MATCH)
     public void testViewReferencingHiveAndDeltaTable(boolean legacyHiveViewTranslation)
     {
-        String hiveTableName = "test_view_hive_table_" + randomTableSuffix();
-        String deltaTableName = "test_view_delta_table_" + randomTableSuffix();
-        String viewName = "test_view_view_" + randomTableSuffix();
-        String deltaRegionTableName = "test_view_delta_region_table_" + randomTableSuffix();
+        String hiveTableName = "test_view_hive_table_" + randomNameSuffix();
+        String deltaTableName = "test_view_delta_table_" + randomNameSuffix();
+        String viewName = "test_view_view_" + randomNameSuffix();
+        String deltaRegionTableName = "test_view_delta_region_table_" + randomNameSuffix();
 
         @Language("SQL")
         String deltaTableData = "SELECT " +
@@ -768,8 +871,8 @@ public class TestHiveAndDeltaLakeRedirect
         }
         finally {
             onDelta().executeQuery("DROP VIEW IF EXISTS " + viewName);
-            onDelta().executeQuery("DROP TABLE IF EXISTS " + deltaTableName);
-            onDelta().executeQuery("DROP TABLE IF EXISTS " + deltaRegionTableName);
+            dropDeltaTableWithRetry(deltaTableName);
+            dropDeltaTableWithRetry(deltaRegionTableName);
             onTrino().executeQuery("DROP TABLE IF EXISTS hive.default." + hiveTableName);
         }
     }
@@ -780,13 +883,13 @@ public class TestHiveAndDeltaLakeRedirect
         return new Object[][] {{true}, {false}};
     }
 
-    private String createTableInDatabricks(String tableName, boolean partitioned)
+    private String createTableOnDelta(String tableName, boolean partitioned)
     {
-        return createTableInDatabricks("default", tableName, partitioned);
+        return createTableOnDelta("default", tableName, partitioned);
     }
 
     @Language("SQL")
-    private String createTableInDatabricks(String schema, String tableName, boolean partitioned)
+    private String createTableOnDelta(String schema, String tableName, boolean partitioned)
     {
         return "CREATE TABLE " + schema + "." + tableName + " " +
                 "USING DELTA " +
@@ -823,8 +926,7 @@ public class TestHiveAndDeltaLakeRedirect
 
     private static AbstractStringAssert<?> assertTableComment(String catalog, String schema, String tableName)
     {
-        QueryResult queryResult = readTableComment(catalog, schema, tableName);
-        return Assertions.assertThat((String) getOnlyElement(getOnlyElement(queryResult.rows())));
+        return Assertions.assertThat((String) readTableComment(catalog, schema, tableName).getOnlyValue());
     }
 
     private static QueryResult readTableComment(String catalog, String schema, String tableName)
@@ -834,6 +936,20 @@ public class TestHiveAndDeltaLakeRedirect
                 param(VARCHAR, catalog),
                 param(VARCHAR, schema),
                 param(VARCHAR, tableName));
+    }
+
+    private static AbstractStringAssert<?> assertColumnComment(String catalog, String schema, String tableName, String columnName)
+    {
+        return Assertions.assertThat((String) readColumnComment(catalog, schema, tableName, columnName).getOnlyValue());
+    }
+
+    private static QueryResult readColumnComment(String catalog, String schema, String tableName, String columnName)
+    {
+        return onTrino().executeQuery(
+                format("SELECT comment FROM %s.information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ?", catalog),
+                param(VARCHAR, schema),
+                param(VARCHAR, tableName),
+                param(VARCHAR, columnName));
     }
 
     private static void assertResultsEqual(QueryResult first, QueryResult second)

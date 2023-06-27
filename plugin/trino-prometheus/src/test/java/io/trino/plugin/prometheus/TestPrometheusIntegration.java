@@ -16,6 +16,7 @@ package io.trino.plugin.prometheus;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.units.Duration;
 import io.trino.spi.connector.ConnectorSplitSource;
+import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.MaterializedResult;
@@ -26,7 +27,6 @@ import java.util.concurrent.TimeUnit;
 
 import static io.trino.plugin.prometheus.PrometheusQueryRunner.createPrometheusClient;
 import static io.trino.plugin.prometheus.PrometheusQueryRunner.createPrometheusQueryRunner;
-import static io.trino.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +54,13 @@ public class TestPrometheusIntegration
     {
         assertThat(query("SELECT labels FROM prometheus.default.up LIMIT 1"))
                 .matches("SELECT MAP(ARRAY[VARCHAR 'instance', '__name__', 'job'], ARRAY[VARCHAR 'localhost:9090', 'up', 'prometheus'])");
+    }
+
+    @Test
+    public void testAggregation()
+    {
+        assertQuerySucceeds("SELECT count(*) FROM default.up"); // Don't check value since the row number isn't deterministic
+        assertQuery("SELECT avg(value) FROM default.up", "VALUES ('1.0')");
     }
 
     @Test
@@ -119,9 +126,9 @@ public class TestPrometheusIntegration
                 null,
                 null,
                 new PrometheusTableHandle("default", table.getName()),
-                null,
-                (DynamicFilter) null);
-        int numSplits = splits.getNextBatch(NOT_PARTITIONED, NUMBER_MORE_THAN_EXPECTED_NUMBER_SPLITS).getNow(null).getSplits().size();
+                (DynamicFilter) null,
+                Constraint.alwaysTrue());
+        int numSplits = splits.getNextBatch(NUMBER_MORE_THAN_EXPECTED_NUMBER_SPLITS).getNow(null).getSplits().size();
         assertEquals(numSplits, config.getMaxQueryRangeDuration().getValue(TimeUnit.SECONDS) / config.getQueryChunkSizeDuration().getValue(TimeUnit.SECONDS),
                 0.001);
     }

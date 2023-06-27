@@ -21,13 +21,19 @@ import io.trino.orc.OrcReader;
 import io.trino.orc.OrcReader.FieldMapperFactory;
 import io.trino.spi.type.TimeType;
 import io.trino.spi.type.Type;
+import io.trino.spi.type.UuidType;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static io.trino.orc.metadata.OrcType.OrcTypeKind.BINARY;
 import static io.trino.orc.metadata.OrcType.OrcTypeKind.LONG;
 import static io.trino.orc.reader.ReaderUtils.invalidStreamType;
+import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.TimeType.TIME_MICROS;
 
 public final class ColumnReaders
 {
+    public static final String ICEBERG_BINARY_TYPE = "iceberg.binary-type";
+
     private ColumnReaders() {}
 
     public static ColumnReader createColumnReader(
@@ -46,11 +52,22 @@ public final class ColumnReaders
             }
             return new TimeColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
         }
+        if (type instanceof UuidType) {
+            checkArgument(column.getColumnType() == BINARY, "UUID type can only be read from BINARY column but got " + column);
+            checkArgument(
+                    "UUID".equals(column.getAttributes().get(ICEBERG_BINARY_TYPE)),
+                    "Expected ORC column for UUID data to be annotated with %s=UUID: %s",
+                    ICEBERG_BINARY_TYPE, column);
+            return new UuidColumnReader(column);
+        }
 
         switch (column.getColumnType()) {
             case BOOLEAN:
                 return new BooleanColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
             case BYTE:
+                if (type == INTEGER && !column.getAttributes().containsKey("iceberg.id")) {
+                    throw invalidStreamType(column, type);
+                }
                 return new ByteColumnReader(type, column, memoryContext.newLocalMemoryContext(ColumnReaders.class.getSimpleName()));
             case SHORT:
             case INT:

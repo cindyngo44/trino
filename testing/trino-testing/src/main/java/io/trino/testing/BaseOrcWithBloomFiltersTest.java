@@ -17,9 +17,10 @@ import io.trino.Session;
 import org.intellij.lang.annotations.Language;
 import org.testng.annotations.Test;
 
-import static io.trino.testing.sql.TestTable.randomTableSuffix;
+import static io.trino.testing.TestingNames.randomNameSuffix;
 import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public abstract class BaseOrcWithBloomFiltersTest
         extends AbstractTestQueryFramework
@@ -29,7 +30,7 @@ public abstract class BaseOrcWithBloomFiltersTest
     @Test
     public void testOrcBloomFilterIsWrittenDuringCreate()
     {
-        String tableName = "create_orc_with_bloom_filters_" + randomTableSuffix();
+        String tableName = "create_orc_with_bloom_filters_" + randomNameSuffix();
         assertUpdate(
                 format(
                         "CREATE TABLE %s WITH (%s) AS SELECT orderstatus, totalprice FROM tpch.tiny.orders",
@@ -43,9 +44,21 @@ public abstract class BaseOrcWithBloomFiltersTest
     }
 
     @Test
+    public void testInvalidOrcBloomFilterColumnsDuringCreate()
+    {
+        String tableName = "create_orc_with_bloom_filters_" + randomNameSuffix();
+        assertThatThrownBy(() -> computeActual(
+                format(
+                        "CREATE TABLE %s WITH (%s) AS SELECT orderstatus FROM tpch.tiny.orders",
+                        tableName,
+                        getTableProperties("totalprice", "orderstatus"))))
+                .hasMessage("Orc bloom filter columns [totalprice] not present in schema");
+    }
+
+    @Test
     public void testOrcBloomFilterIsWrittenDuringInsert()
     {
-        String tableName = "insert_orc_with_bloom_filters_" + randomTableSuffix();
+        String tableName = "insert_orc_with_bloom_filters_" + randomNameSuffix();
         assertUpdate(
                 format(
                         "CREATE TABLE %s (totalprice DOUBLE, orderstatus VARCHAR) WITH (%s)",

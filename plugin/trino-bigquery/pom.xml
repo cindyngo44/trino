@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>385-SNAPSHOT</version>
+        <version>421-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -23,14 +23,14 @@
                 <groupId>com.google.cloud</groupId>
                 <artifactId>libraries-bom</artifactId>
                 <type>pom</type>
-                <version>24.2.0</version>
+                <version>26.14.0</version>
                 <scope>import</scope>
             </dependency>
 
             <dependency>
                 <groupId>io.opencensus</groupId>
                 <artifactId>opencensus-api</artifactId>
-                <version>0.28.0</version>
+                <version>0.31.1</version>
             </dependency>
 
             <dependency>
@@ -42,13 +42,19 @@
             <dependency>
                 <groupId>org.apache.httpcomponents</groupId>
                 <artifactId>httpcore</artifactId>
-                <version>4.4.15</version>
+                <version>4.4.16</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.conscrypt</groupId>
+                <artifactId>conscrypt-openjdk-uber</artifactId>
+                <version>2.5.2</version>
             </dependency>
 
             <dependency>
                 <groupId>org.threeten</groupId>
                 <artifactId>threetenbp</artifactId>
-                <version>1.5.2</version>
+                <version>1.6.8</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -67,6 +73,11 @@
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>bootstrap</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>concurrent</artifactId>
         </dependency>
 
         <dependency>
@@ -92,6 +103,12 @@
         <dependency>
             <groupId>com.google.api</groupId>
             <artifactId>gax</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -116,6 +133,10 @@
                 <exclusion>
                     <groupId>com.google.guava</groupId>
                     <artifactId>listenablefuture</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -142,6 +163,10 @@
                     <groupId>com.google.guava</groupId>
                     <artifactId>listenablefuture</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
 
@@ -161,6 +186,10 @@
                     <groupId>com.google.re2j</groupId>
                     <artifactId>re2j</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>javax.annotation</groupId>
+                    <artifactId>javax.annotation-api</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
 
@@ -172,6 +201,11 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-core-http</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
         </dependency>
 
         <dependency>
@@ -191,6 +225,17 @@
         </dependency>
 
         <dependency>
+            <groupId>com.google.http-client</groupId>
+            <artifactId>google-http-client-apache-v2</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
             <groupId>com.google.inject</groupId>
             <artifactId>guice</artifactId>
         </dependency>
@@ -201,18 +246,23 @@
         </dependency>
 
         <dependency>
+            <groupId>dev.failsafe</groupId>
+            <artifactId>failsafe</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>io.grpc</groupId>
             <artifactId>grpc-api</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>javax.annotation</groupId>
-            <artifactId>javax.annotation-api</artifactId>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-netty-shaded</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>javax.inject</groupId>
-            <artifactId>javax.inject</artifactId>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
 
         <dependency>
@@ -221,8 +271,45 @@
         </dependency>
 
         <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-compression</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-memory-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>arrow-vector</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.apache.avro</groupId>
             <artifactId>avro</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+            <version>4.5.14</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpcore</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.threeten</groupId>
+            <artifactId>threetenbp</artifactId>
         </dependency>
 
         <!-- used by tests but also needed transitively -->
@@ -252,6 +339,18 @@
         </dependency>
 
         <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-context</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
             <groupId>org.openjdk.jol</groupId>
             <artifactId>jol-core</artifactId>
             <scope>provided</scope>
@@ -262,6 +361,18 @@
             <groupId>io.trino</groupId>
             <artifactId>trino-client</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-exchange-filesystem</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.google.re2j</groupId>
+                    <artifactId>re2j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -313,6 +424,18 @@
 
         <dependency>
             <groupId>io.trino</groupId>
+            <artifactId>trino-testing-containers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-testing-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
             <artifactId>trino-tpch</artifactId>
             <scope>test</scope>
         </dependency>
@@ -355,6 +478,20 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.basepom.maven</groupId>
+                <artifactId>duplicate-finder-maven-plugin</artifactId>
+                <configuration>
+                    <ignoredResourcePatterns>
+                        <ignoredResourcePattern>arrow-git.properties</ignoredResourcePattern>
+                    </ignoredResourcePatterns>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
         <profile>
             <id>default</id>
@@ -369,11 +506,17 @@
                         <configuration>
                             <excludes>
                                 <!-- If you are adding entry here also add an entry to cloud-tests or cloud-tests-case-insensitive-mapping profile below -->
-                                <exclude>**/TestBigQueryConnectorTest.java</exclude>
-                                <exclude>**/TestBigQueryTypeMapping.java</exclude>
+                                <exclude>**/TestBigQueryAvroConnectorTest.java</exclude>
+                                <exclude>**/TestBigQueryArrowConnectorSmokeTest.java</exclude>
+                                <exclude>**/TestBigQueryWithDifferentProjectIdConnectorSmokeTest.java</exclude>
+                                <exclude>**/TestBigQueryMetadataCaching.java</exclude>
+                                <exclude>**/TestBigQueryAvroTypeMapping.java</exclude>
+                                <exclude>**/TestBigQueryArrowTypeMapping.java</exclude>
                                 <exclude>**/TestBigQueryMetadata.java</exclude>
                                 <exclude>**/TestBigQueryInstanceCleaner.java</exclude>
                                 <exclude>**/TestBigQueryCaseInsensitiveMapping.java</exclude>
+                                <exclude>**/TestBigQuery*FailureRecoveryTest.java</exclude>
+                                <exclude>**/TestBigQueryWithProxyConnectorSmokeTest.java</exclude>
                             </excludes>
                         </configuration>
                     </plugin>
@@ -393,10 +536,14 @@
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
                             <includes>
-                                <include>**/TestBigQueryConnectorTest.java</include>
-                                <include>**/TestBigQueryTypeMapping.java</include>
+                                <include>**/TestBigQueryAvroConnectorTest.java</include>
+                                <include>**/TestBigQueryWithDifferentProjectIdConnectorSmokeTest.java</include>
+                                <include>**/TestBigQueryMetadataCaching.java</include>
+                                <include>**/TestBigQueryAvroTypeMapping.java</include>
                                 <include>**/TestBigQueryMetadata.java</include>
                                 <include>**/TestBigQueryInstanceCleaner.java</include>
+                                <include>**/TestBigQuery*FailureRecoveryTest.java</include>
+                                <include>**/TestBigQueryWithProxyConnectorSmokeTest.java</include>
                             </includes>
                         </configuration>
                     </plugin>
@@ -418,7 +565,35 @@
                         <configuration>
                             <includes>
                                 <include>**/TestBigQueryCaseInsensitiveMapping.java</include>
+                                <!-- Also included here to make sure the case-insesitive project also gets cleaned up -->
                                 <include>**/TestBigQueryInstanceCleaner.java</include>
+                            </includes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Separate profile for Arrow related tests since they require extra JVM args -->
+        <profile>
+            <id>cloud-tests-arrow</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <air.test.jvm.additional-arguments>
+                    --add-opens=java.base/java.nio=ALL-UNNAMED
+                </air.test.jvm.additional-arguments>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <includes>
+                                <include>**/TestBigQueryArrowConnectorSmokeTest.java</include>
+                                <include>**/TestBigQueryArrowTypeMapping.java</include>
                             </includes>
                         </configuration>
                     </plugin>

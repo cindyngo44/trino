@@ -23,8 +23,9 @@ stored on Amazon S3 (preferred), or stored in a local directory on each Trino no
 This connector is a **read-only** connector. It can only fetch data from Kinesis streams,
 but cannot create streams or push data into existing streams.
 
-To configure the Kinesis connector, create a catalog properties file ``etc/catalog/kinesis.properties``
-with the following contents, replacing the properties as appropriate:
+To configure the Kinesis connector, create a catalog properties file
+``etc/catalog/example.properties`` with the following contents, replacing the
+properties as appropriate:
 
 .. code-block:: text
 
@@ -38,7 +39,7 @@ Configuration properties
 The following configuration properties are available:
 
 ==============================================  =======================================================================
-Property Name                                   Description
+Property name                                   Description
 ==============================================  =======================================================================
 ``kinesis.access-key``                          Access key to AWS account or blank to use default provider chain
 ``kinesis.secret-key``                          Secret key to AWS account or blank to use default provider chain

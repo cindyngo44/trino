@@ -15,6 +15,8 @@
 package io.trino.sql.planner.optimizations;
 
 import io.trino.Session;
+import io.trino.cost.TableStatsProvider;
+import io.trino.execution.querystats.PlanOptimizersStatsCollector;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.spi.TrinoException;
 import io.trino.sql.planner.PlanNodeIdAllocator;
@@ -37,7 +39,15 @@ public class CheckSubqueryNodesAreRewritten
         implements PlanOptimizer
 {
     @Override
-    public PlanNode optimize(PlanNode plan, Session session, TypeProvider types, SymbolAllocator symbolAllocator, PlanNodeIdAllocator idAllocator, WarningCollector warningCollector)
+    public PlanNode optimize(
+            PlanNode plan,
+            Session session,
+            TypeProvider types,
+            SymbolAllocator symbolAllocator,
+            PlanNodeIdAllocator idAllocator,
+            WarningCollector warningCollector,
+            PlanOptimizersStatsCollector planOptimizersStatsCollector,
+            TableStatsProvider tableStatsProvider)
     {
         searchFrom(plan).where(ApplyNode.class::isInstance)
                 .findFirst()

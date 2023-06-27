@@ -49,10 +49,17 @@ public class TestTpchConnectorTest
         return TpchQueryRunnerBuilder.builder().build();
     }
 
+    @SuppressWarnings("DuplicateBranchesInSwitch")
     @Override
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         switch (connectorBehavior) {
+            case SUPPORTS_INSERT:
+            case SUPPORTS_DELETE:
+            case SUPPORTS_UPDATE:
+            case SUPPORTS_MERGE:
+                return false;
+
             case SUPPORTS_TOPN_PUSHDOWN:
                 return false;
 
@@ -60,27 +67,23 @@ public class TestTpchConnectorTest
                 return false;
 
             case SUPPORTS_CREATE_TABLE:
+            case SUPPORTS_RENAME_TABLE:
                 return false;
 
             case SUPPORTS_ADD_COLUMN:
-                return false;
-
-            case SUPPORTS_RENAME_TABLE:
+            case SUPPORTS_RENAME_COLUMN:
+            case SUPPORTS_SET_COLUMN_TYPE:
                 return false;
 
             case SUPPORTS_COMMENT_ON_TABLE:
             case SUPPORTS_COMMENT_ON_COLUMN:
                 return false;
 
-            case SUPPORTS_INSERT:
-                return false;
-
-            case SUPPORTS_DELETE:
+            case SUPPORTS_CREATE_VIEW:
+            case SUPPORTS_CREATE_MATERIALIZED_VIEW:
                 return false;
 
             case SUPPORTS_ARRAY:
-                return false;
-
             case SUPPORTS_ROW_TYPE:
                 return false;
 
@@ -96,24 +99,27 @@ public class TestTpchConnectorTest
         MaterializedResult result = computeActual("EXPLAIN (TYPE IO, FORMAT JSON) " + query);
         EstimatedStatsAndCost scanEstimate = new EstimatedStatsAndCost(15000.0, 1597294.0, 1597294.0, 0.0, 0.0);
         EstimatedStatsAndCost totalEstimate = new EstimatedStatsAndCost(15000.0, 1597294.0, 1597294.0, 0.0, 1597294.0);
+
         IoPlanPrinter.IoPlan.TableColumnInfo input = new IoPlanPrinter.IoPlan.TableColumnInfo(
                 new CatalogSchemaTableName("tpch", "tiny", "orders"),
-                ImmutableSet.of(
-                        new IoPlanPrinter.ColumnConstraint(
-                                "orderstatus",
-                                createVarcharType(1),
-                                new IoPlanPrinter.FormattedDomain(
-                                        false,
-                                        ImmutableSet.of(
-                                                new IoPlanPrinter.FormattedRange(
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("F"), EXACTLY),
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("F"), EXACTLY)),
-                                                new IoPlanPrinter.FormattedRange(
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("O"), EXACTLY),
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("O"), EXACTLY)),
-                                                new IoPlanPrinter.FormattedRange(
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("P"), EXACTLY),
-                                                        new IoPlanPrinter.FormattedMarker(Optional.of("P"), EXACTLY)))))),
+                new IoPlanPrinter.Constraint(
+                        false,
+                        ImmutableSet.of(
+                                new IoPlanPrinter.ColumnConstraint(
+                                        "orderstatus",
+                                        createVarcharType(1),
+                                        new IoPlanPrinter.FormattedDomain(
+                                                false,
+                                                ImmutableSet.of(
+                                                        new IoPlanPrinter.FormattedRange(
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("F"), EXACTLY),
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("F"), EXACTLY)),
+                                                        new IoPlanPrinter.FormattedRange(
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("O"), EXACTLY),
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("O"), EXACTLY)),
+                                                        new IoPlanPrinter.FormattedRange(
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("P"), EXACTLY),
+                                                                new IoPlanPrinter.FormattedMarker(Optional.of("P"), EXACTLY))))))),
                 scanEstimate);
 
         ObjectMapperProvider objectMapperProvider = new ObjectMapperProvider();
@@ -144,19 +150,19 @@ public class TestTpchConnectorTest
         // TPCH connector produces pre-sorted data for orders and lineitem tables
         assertExplain(
                 "EXPLAIN SELECT * FROM orders ORDER BY orderkey ASC NULLS FIRST LIMIT 10",
-                "\\QLimitPartial[10, input pre-sorted by (orderkey)]");
+                "\\QLimitPartial[count = 10, inputPreSortedBy = [orderkey]]");
         assertExplain(
                 "EXPLAIN SELECT * FROM lineitem ORDER BY orderkey ASC NULLS FIRST LIMIT 10",
-                "\\QLimitPartial[10, input pre-sorted by (orderkey)]");
+                "\\QLimitPartial[count = 10, inputPreSortedBy = [orderkey]]");
         assertExplain(
                 "EXPLAIN SELECT * FROM lineitem ORDER BY orderkey ASC NULLS FIRST, linenumber ASC NULLS FIRST LIMIT 10",
-                "\\QLimitPartial[10, input pre-sorted by (orderkey, linenumber)]");
+                "\\QLimitPartial[count = 10, inputPreSortedBy = [orderkey, linenumber]]");
         assertExplain(
                 "EXPLAIN SELECT * FROM lineitem ORDER BY orderkey ASC NULLS FIRST, linenumber LIMIT 10",
-                "\\QTopNPartial[10 by (orderkey ASC NULLS FIRST, linenumber ASC NULLS LAST)]");
+                "\\QTopNPartial[count = 10, orderBy = [orderkey ASC NULLS FIRST, linenumber ASC NULLS LAST]]");
         assertExplain(
                 "EXPLAIN SELECT * FROM lineitem ORDER BY orderkey ASC LIMIT 10",
-                "\\QTopNPartial[10 by (orderkey ASC NULLS LAST)]");
+                "\\QTopNPartial[count = 10, orderBy = [orderkey ASC NULLS LAST]]");
 
         assertQuery(
                 "SELECT * FROM lineitem WHERE orderkey IS NOT NULL ORDER BY orderkey ASC NULLS FIRST LIMIT 10",

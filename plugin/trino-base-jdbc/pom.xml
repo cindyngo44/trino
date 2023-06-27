@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>385-SNAPSHOT</version>
+        <version>421-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -95,13 +95,13 @@
         </dependency>
 
         <dependency>
-            <groupId>javax.annotation</groupId>
-            <artifactId>javax.annotation-api</artifactId>
+            <groupId>dev.failsafe</groupId>
+            <artifactId>failsafe</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>javax.inject</groupId>
-            <artifactId>javax.inject</artifactId>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
 
         <dependency>
@@ -115,14 +115,14 @@
         </dependency>
 
         <dependency>
-            <groupId>net.jodah</groupId>
-            <artifactId>failsafe</artifactId>
-        </dependency>
-
-        <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
             <version>${dep.antlr.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.gaul</groupId>
+            <artifactId>modernizer-maven-annotations</artifactId>
         </dependency>
 
         <dependency>
@@ -204,6 +204,12 @@
 
         <dependency>
             <groupId>io.trino</groupId>
+            <artifactId>trino-testing-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
             <artifactId>trino-tpch</artifactId>
             <scope>test</scope>
         </dependency>
@@ -250,6 +256,20 @@
             <plugin>
                 <groupId>org.antlr</groupId>
                 <artifactId>antlr4-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <configuration>
+                    <rules combine.children="append">
+                        <RestrictImports>
+                            <reason>Use AssertJ assertions instead of TestNG</reason>
+                            <bannedImport>org.testng.Assert.*</bannedImport>
+                            <bannedImport>org.testng.AssertJUnit.*</bannedImport>
+                            <bannedImport>org.testng.asserts.**</bannedImport>
+                        </RestrictImports>
+                    </rules>
+                </configuration>
             </plugin>
         </plugins>
     </build>

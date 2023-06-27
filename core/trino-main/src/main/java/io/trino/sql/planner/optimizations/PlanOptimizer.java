@@ -14,6 +14,8 @@
 package io.trino.sql.planner.optimizations;
 
 import io.trino.Session;
+import io.trino.cost.TableStatsProvider;
+import io.trino.execution.querystats.PlanOptimizersStatsCollector;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.sql.planner.PlanNodeIdAllocator;
 import io.trino.sql.planner.SymbolAllocator;
@@ -28,5 +30,7 @@ public interface PlanOptimizer
             TypeProvider types,
             SymbolAllocator symbolAllocator,
             PlanNodeIdAllocator idAllocator,
-            WarningCollector warningCollector);
+            WarningCollector warningCollector,
+            PlanOptimizersStatsCollector planOptimizersStatsCollector,
+            TableStatsProvider tableStatsProvider);
 }

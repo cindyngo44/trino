@@ -66,7 +66,6 @@ public class QueryTracker<T extends TrackedQuery>
 
     public QueryTracker(QueryManagerConfig queryManagerConfig, ScheduledExecutorService queryManagementExecutor)
     {
-        requireNonNull(queryManagerConfig, "queryManagerConfig is null");
         this.minQueryExpireAge = queryManagerConfig.getMinQueryExpireAge();
         this.maxQueryHistory = queryManagerConfig.getMaxQueryHistory();
         this.clientTimeout = queryManagerConfig.getClientTimeout();
@@ -146,6 +145,12 @@ public class QueryTracker<T extends TrackedQuery>
     {
         return tryGetQuery(queryId)
                 .orElseThrow(() -> new NoSuchElementException(queryId.toString()));
+    }
+
+    public boolean hasQuery(QueryId queryId)
+    {
+        requireNonNull(queryId, "queryId is null");
+        return queries.containsKey(queryId);
     }
 
     public Optional<T> tryGetQuery(QueryId queryId)
@@ -260,12 +265,11 @@ public class QueryTracker<T extends TrackedQuery>
 
                 if (isAbandoned(query)) {
                     log.info("Failing abandoned query %s", query.getQueryId());
-                    query.fail(new TrinoException(
-                            ABANDONED_QUERY,
-                            format("Query %s has not been accessed since %s: currentTime %s",
-                                    query.getQueryId(),
-                                    query.getLastHeartbeat(),
-                                    DateTime.now())));
+                    query.fail(new TrinoException(ABANDONED_QUERY, format(
+                            "Query %s was abandoned by the client, as it may have exited or stopped checking for query results. Query results have not been accessed since %s: currentTime %s",
+                            query.getQueryId(),
+                            query.getLastHeartbeat(),
+                            DateTime.now())));
                 }
             }
             catch (RuntimeException e) {

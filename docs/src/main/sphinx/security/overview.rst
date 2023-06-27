@@ -30,7 +30,11 @@ order of steps. Do not skip or combine steps.
      HTTPS, if possible.
    * Use a globally trusted TLS certificate.
 
+   :ref:`Verify this step is working correctly.<verify-tls>`
+
 #. **Configure** a :doc:`a shared secret </security/internal-communication>`
+
+   :ref:`Verify this step is working correctly.<verify-secrets>`
 
 #. **Enable authentication**
 
@@ -40,10 +44,14 @@ order of steps. Do not skip or combine steps.
      </security/ldap>`.
    * Avoid the complexity of Kerberos for client authentication, if possible.
 
+   :ref:`Verify this step is working correctly.<verify-authentication>`
+
 #. **Enable authorization and access control**
 
    * Start with :doc:`file-based rules <file-system-access-control>`.
    * Then configure another access control method as required.
+
+   :ref:`Verify this step is working correctly. <verify-rules>`
 
 Configure one step at a time. Always restart the Trino server after each
 change, and verify the results before proceeding.
@@ -53,9 +61,9 @@ change, and verify the results before proceeding.
 Securing client access to the cluster
 -------------------------------------
 
-Trino :doc:`clients </client>` include the Trino :doc:`CLI </installation/cli>`,
+Trino :doc:`clients </client>` include the Trino :doc:`CLI </client/cli>`,
 the :doc:`Web UI </admin/web-interface>`, the :doc:`JDBC driver
-</installation/jdbc>`, `Python, Go, or other clients
+</client/jdbc>`, `Python, Go, or other clients
 <https://trino.io/resources.html>`_, and any applications using these tools.
 
 All access to the Trino cluster is managed by the coordinator. Thus, securing
@@ -132,7 +140,7 @@ denying access to any inaccessible columns.
 
 You can change this behavior to silently hide inaccessible columns with the
 global property ``hide-inaccessible-columns`` configured in
-:ref:`config_properties`:
+:ref:`config-properties`:
 
 .. code-block:: properties
 

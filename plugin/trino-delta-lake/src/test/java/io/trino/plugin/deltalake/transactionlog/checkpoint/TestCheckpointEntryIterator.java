@@ -16,25 +16,23 @@ package io.trino.plugin.deltalake.transactionlog.checkpoint;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterators;
+import io.trino.filesystem.Location;
+import io.trino.filesystem.TrinoFileSystem;
+import io.trino.filesystem.TrinoInputFile;
+import io.trino.filesystem.hdfs.HdfsFileSystemFactory;
+import io.trino.plugin.deltalake.DeltaLakeConfig;
 import io.trino.plugin.deltalake.transactionlog.AddFileEntry;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeTransactionLogEntry;
 import io.trino.plugin.deltalake.transactionlog.MetadataEntry;
 import io.trino.plugin.deltalake.transactionlog.ProtocolEntry;
 import io.trino.plugin.deltalake.transactionlog.RemoveFileEntry;
 import io.trino.plugin.hive.FileFormatDataSourceStats;
-import io.trino.plugin.hive.HdfsConfig;
-import io.trino.plugin.hive.HdfsConfiguration;
-import io.trino.plugin.hive.HdfsConfigurationInitializer;
-import io.trino.plugin.hive.HdfsEnvironment;
-import io.trino.plugin.hive.HiveHdfsConfiguration;
-import io.trino.plugin.hive.authentication.NoHdfsAuthentication;
 import io.trino.plugin.hive.parquet.ParquetReaderConfig;
-import org.apache.hadoop.fs.Path;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
-import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -43,13 +41,15 @@ import java.util.Optional;
 import java.util.Set;
 
 import static com.google.common.io.Resources.getResource;
+import static io.trino.plugin.deltalake.DeltaTestingConnectorSession.SESSION;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.ADD;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.COMMIT;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.METADATA;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.PROTOCOL;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.REMOVE;
 import static io.trino.plugin.deltalake.transactionlog.checkpoint.CheckpointEntryIterator.EntryType.TRANSACTION;
-import static io.trino.plugin.hive.HiveTestUtils.SESSION;
+import static io.trino.plugin.hive.HiveTestUtils.HDFS_ENVIRONMENT;
+import static io.trino.plugin.hive.HiveTestUtils.HDFS_FILE_SYSTEM_STATS;
 import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,24 +57,17 @@ public class TestCheckpointEntryIterator
 {
     private static final String TEST_CHECKPOINT = "databricks/person/_delta_log/00000000000000000010.checkpoint.parquet";
 
-    private HdfsEnvironment hdfsEnvironment;
-
     private CheckpointSchemaManager checkpointSchemaManager;
 
     @BeforeClass
     public void setUp()
     {
-        HdfsConfig hdfsConfig = new HdfsConfig();
-        HdfsConfiguration hdfsConfiguration = new HiveHdfsConfiguration(new HdfsConfigurationInitializer(hdfsConfig), ImmutableSet.of());
-        hdfsEnvironment = new HdfsEnvironment(hdfsConfiguration, hdfsConfig, new NoHdfsAuthentication());
-
         checkpointSchemaManager = new CheckpointSchemaManager(TESTING_TYPE_MANAGER);
     }
 
     @AfterClass(alwaysRun = true)
     public void tearDown()
     {
-        hdfsEnvironment = null;
         checkpointSchemaManager = null;
     }
 
@@ -173,7 +166,7 @@ public class TestCheckpointEntryIterator
         assertThat(entries).element(12).extracting(DeltaLakeTransactionLogEntry::getMetaData).isEqualTo(metadataEntry);
 
         // ProtocolEntry
-        assertThat(entries).element(11).extracting(DeltaLakeTransactionLogEntry::getProtocol).isEqualTo(new ProtocolEntry(1, 2));
+        assertThat(entries).element(11).extracting(DeltaLakeTransactionLogEntry::getProtocol).isEqualTo(new ProtocolEntry(1, 2, Optional.empty(), Optional.empty()));
 
         // TransactionEntry
         // not found in the checkpoint, TODO add a test
@@ -215,27 +208,29 @@ public class TestCheckpointEntryIterator
     }
 
     private MetadataEntry readMetadataEntry(URI checkpointUri)
+            throws IOException
     {
         CheckpointEntryIterator checkpointEntryIterator = createCheckpointEntryIterator(checkpointUri, ImmutableSet.of(METADATA), Optional.empty());
         return Iterators.getOnlyElement(checkpointEntryIterator).getMetaData();
     }
 
     private CheckpointEntryIterator createCheckpointEntryIterator(URI checkpointUri, Set<CheckpointEntryIterator.EntryType> entryTypes, Optional<MetadataEntry> metadataEntry)
+            throws IOException
     {
-        Path path = new Path(checkpointUri);
-        long fileSize = new File(checkpointUri).length();
+        TrinoFileSystem fileSystem = new HdfsFileSystemFactory(HDFS_ENVIRONMENT, HDFS_FILE_SYSTEM_STATS).create(SESSION);
+        TrinoInputFile checkpointFile = fileSystem.newInputFile(Location.of(checkpointUri.toString()));
 
         return new CheckpointEntryIterator(
-                path,
+                checkpointFile,
                 SESSION,
-                fileSize,
+                checkpointFile.length(),
                 checkpointSchemaManager,
                 TESTING_TYPE_MANAGER,
                 entryTypes,
                 metadataEntry,
-                hdfsEnvironment,
                 new FileFormatDataSourceStats(),
                 new ParquetReaderConfig().toParquetReaderOptions(),
-                true);
+                true,
+                new DeltaLakeConfig().getDomainCompactionThreshold());
     }
 }

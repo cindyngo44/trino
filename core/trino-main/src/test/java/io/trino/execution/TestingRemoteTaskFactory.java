@@ -20,17 +20,22 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.stats.TDigest;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
+import io.opentelemetry.api.trace.Span;
 import io.trino.Session;
 import io.trino.execution.NodeTaskMap.PartitionedSplitCountTracker;
 import io.trino.execution.StateMachine.StateChangeListener;
 import io.trino.execution.buffer.BufferState;
 import io.trino.execution.buffer.OutputBufferInfo;
+import io.trino.execution.buffer.OutputBufferStatus;
 import io.trino.execution.buffer.OutputBuffers;
+import io.trino.execution.buffer.SpoolingOutputStats;
 import io.trino.metadata.InternalNode;
 import io.trino.metadata.Split;
 import io.trino.operator.TaskStats;
+import io.trino.plugin.base.metrics.TDigestHistogram;
 import io.trino.sql.planner.PlanFragment;
 import io.trino.sql.planner.plan.DynamicFilterId;
 import io.trino.sql.planner.plan.PlanNodeId;
@@ -67,8 +72,10 @@ public class TestingRemoteTaskFactory
     @Override
     public synchronized RemoteTask createRemoteTask(
             Session session,
+            Span stageSpan,
             TaskId taskId,
             InternalNode node,
+            boolean speculative,
             PlanFragment fragment,
             Multimap<PlanNodeId, Split> initialSplits,
             OutputBuffers outputBuffers,
@@ -146,7 +153,9 @@ public class TestingRemoteTaskFactory
                             0,
                             0,
                             0,
-                            ImmutableList.of()),
+                            Optional.empty(),
+                            Optional.of(new TDigestHistogram(new TDigest())),
+                            Optional.empty()),
                     ImmutableSet.copyOf(noMoreSplits),
                     new TaskStats(DateTime.now(), null),
                     Optional.empty(),
@@ -168,12 +177,14 @@ public class TestingRemoteTaskFactory
                     state,
                     location,
                     nodeId,
-                    ImmutableSet.of(),
+                    false,
                     failures,
                     0,
                     0,
-                    false,
+                    OutputBufferStatus.initial(),
                     DataSize.of(0, BYTE),
+                    DataSize.of(0, BYTE),
+                    Optional.empty(),
                     DataSize.of(0, BYTE),
                     DataSize.of(0, BYTE),
                     DataSize.of(0, BYTE),
@@ -218,14 +229,15 @@ public class TestingRemoteTaskFactory
         }
 
         @Override
-        public void noMoreSplits(PlanNodeId sourceId, Lifespan lifespan)
-        {
-        }
-
-        @Override
         public synchronized void setOutputBuffers(OutputBuffers outputBuffers)
         {
             this.outputBuffers = outputBuffers;
+        }
+
+        @Override
+        public void setSpeculative(boolean speculative)
+        {
+           // ignore
         }
 
         public synchronized OutputBuffers getOutputBuffers()
@@ -262,12 +274,14 @@ public class TestingRemoteTaskFactory
         public void cancel()
         {
             taskStateMachine.cancel();
+            taskStateMachine.terminationComplete();
         }
 
         @Override
         public void abort()
         {
             taskStateMachine.abort();
+            taskStateMachine.terminationComplete();
         }
 
         @Override
@@ -277,15 +291,17 @@ public class TestingRemoteTaskFactory
         }
 
         @Override
-        public void fail(Throwable cause)
-        {
-            taskStateMachine.failed(cause);
-        }
-
-        @Override
         public void failRemotely(Throwable cause)
         {
             taskStateMachine.failed(cause);
+            taskStateMachine.terminationComplete();
+        }
+
+        @Override
+        public void failLocallyImmediately(Throwable cause)
+        {
+            taskStateMachine.failed(cause);
+            taskStateMachine.terminationComplete();
         }
 
         @Override
@@ -303,6 +319,12 @@ public class TestingRemoteTaskFactory
         public int getUnacknowledgedPartitionedSplitCount()
         {
             return 0;
+        }
+
+        @Override
+        public SpoolingOutputStats.Snapshot retrieveAndDropSpoolingOutputStats()
+        {
+            throw new UnsupportedOperationException();
         }
     }
 }

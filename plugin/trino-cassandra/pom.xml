@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>385-SNAPSHOT</version>
+        <version>421-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -15,6 +15,7 @@
     <properties>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
         <dep.native-protocol.version>1.5.1</dep.native-protocol.version>
+        <air.test.parallel>instances</air.test.parallel>
     </properties>
 
     <dependencies>
@@ -98,11 +99,6 @@
         </dependency>
 
         <dependency>
-            <groupId>javax.inject</groupId>
-            <artifactId>javax.inject</artifactId>
-        </dependency>
-
-        <dependency>
             <groupId>javax.validation</groupId>
             <artifactId>validation-api</artifactId>
         </dependency>
@@ -145,6 +141,18 @@
         </dependency>
 
         <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-context</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
             <groupId>org.openjdk.jol</groupId>
             <artifactId>jol-core</artifactId>
             <scope>provided</scope>
@@ -167,6 +175,12 @@
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-testing-services</artifactId>
             <scope>test</scope>
         </dependency>
 

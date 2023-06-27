@@ -17,6 +17,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.trino.Session;
+import io.trino.execution.querystats.PlanOptimizersStatsCollector;
 import io.trino.execution.warnings.DefaultWarningCollector;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.execution.warnings.WarningCollectorConfig;
@@ -48,6 +49,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.sql.planner.LogicalPlanner.Stage.OPTIMIZED;
 import static io.trino.sql.planner.plan.Patterns.project;
+import static io.trino.testing.TestingHandles.TEST_CATALOG_NAME;
 import static io.trino.testing.TestingSession.testSessionBuilder;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.IntStream.range;
@@ -61,7 +63,7 @@ public class TestPlannerWarnings
     public void setUp()
     {
         queryRunner = LocalQueryRunner.create(testSessionBuilder()
-                .setCatalog("local")
+                .setCatalog(TEST_CATALOG_NAME)
                 .setSchema("tiny")
                 .build());
 
@@ -75,6 +77,7 @@ public class TestPlannerWarnings
     public void tearDown()
     {
         queryRunner.close();
+        queryRunner = null;
     }
 
     @Test
@@ -94,13 +97,14 @@ public class TestPlannerWarnings
                 .setSchema(queryRunner.getDefaultSession().getSchema());
         sessionProperties.forEach(sessionBuilder::setSystemProperty);
         WarningCollector warningCollector = new DefaultWarningCollector(new WarningCollectorConfig());
+        PlanOptimizersStatsCollector planOptimizersStatsCollector = new PlanOptimizersStatsCollector(5);
         try {
             queryRunner.inTransaction(sessionBuilder.build(), transactionSession -> {
                 if (rules.isPresent()) {
-                    createPlan(queryRunner, transactionSession, sql, warningCollector, rules.get());
+                    createPlan(queryRunner, transactionSession, sql, warningCollector, planOptimizersStatsCollector, rules.get());
                 }
                 else {
-                    queryRunner.createPlan(transactionSession, sql, OPTIMIZED, false, warningCollector);
+                    queryRunner.createPlan(transactionSession, sql, OPTIMIZED, false, warningCollector, planOptimizersStatsCollector);
                 }
                 return null;
             });
@@ -118,7 +122,7 @@ public class TestPlannerWarnings
         }
     }
 
-    private static Plan createPlan(LocalQueryRunner queryRunner, Session session, String sql, WarningCollector warningCollector, List<Rule<?>> rules)
+    private static Plan createPlan(LocalQueryRunner queryRunner, Session session, String sql, WarningCollector warningCollector, PlanOptimizersStatsCollector planOptimizersStatsCollector, List<Rule<?>> rules)
     {
         // Warnings from testing rules will be added
         PlanOptimizer optimizer = new IterativeOptimizer(
@@ -128,7 +132,7 @@ public class TestPlannerWarnings
                 queryRunner.getCostCalculator(),
                 ImmutableSet.copyOf(rules));
 
-        return queryRunner.createPlan(session, sql, ImmutableList.of(optimizer), OPTIMIZED, warningCollector);
+        return queryRunner.createPlan(session, sql, ImmutableList.of(optimizer), OPTIMIZED, warningCollector, planOptimizersStatsCollector);
     }
 
     public static List<TrinoWarning> createTestWarnings(int numberOfWarnings)
@@ -160,8 +164,7 @@ public class TestPlannerWarnings
         @Override
         public Result apply(ProjectNode node, Captures captures, Context context)
         {
-            warnings.stream()
-                    .forEach(context.getWarningCollector()::add);
+            warnings.forEach(context.getWarningCollector()::add);
             return Result.empty();
         }
     }

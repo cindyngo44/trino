@@ -13,31 +13,27 @@
  */
 package io.trino.plugin.hive.s3;
 
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.net.HostAndPort;
+import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import io.airlift.log.Logger;
 import io.airlift.units.Duration;
-import io.trino.plugin.hive.HdfsConfig;
-import io.trino.plugin.hive.HdfsConfigurationInitializer;
-import io.trino.plugin.hive.HdfsEnvironment;
-import io.trino.plugin.hive.HiveConfig;
-import io.trino.plugin.hive.HiveHdfsConfiguration;
 import io.trino.plugin.hive.HiveQueryRunner;
-import io.trino.plugin.hive.authentication.HiveIdentity;
-import io.trino.plugin.hive.authentication.NoHdfsAuthentication;
 import io.trino.plugin.hive.containers.HiveMinioDataLake;
-import io.trino.plugin.hive.metastore.HiveMetastoreConfig;
 import io.trino.plugin.hive.metastore.thrift.BridgingHiveMetastore;
-import io.trino.plugin.hive.metastore.thrift.TestingMetastoreLocator;
-import io.trino.plugin.hive.metastore.thrift.ThriftHiveMetastore;
+import io.trino.plugin.hive.metastore.thrift.TestingTokenAwareMetastoreClientFactory;
 import io.trino.plugin.hive.metastore.thrift.ThriftMetastoreConfig;
 import io.trino.testing.DistributedQueryRunner;
+import io.trino.tpch.TpchTable;
 
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static io.trino.plugin.hive.TestingThriftHiveMetastoreBuilder.testingThriftHiveMetastoreBuilder;
+import static io.trino.plugin.hive.security.HiveSecurityModule.ALLOW_ALL;
+import static io.trino.testing.containers.Minio.MINIO_ACCESS_KEY;
+import static io.trino.testing.containers.Minio.MINIO_SECRET_KEY;
 import static java.util.Objects.requireNonNull;
 
 public final class S3HiveQueryRunner
@@ -78,8 +74,8 @@ public final class S3HiveQueryRunner
         return builder()
                 .setHiveMetastoreEndpoint(hiveMinioDataLake.getHiveHadoop().getHiveMetastoreEndpoint())
                 .setS3Endpoint("http://" + hiveMinioDataLake.getMinio().getMinioApiEndpoint())
-                .setS3AccessKey(HiveMinioDataLake.ACCESS_KEY)
-                .setS3SecretKey(HiveMinioDataLake.SECRET_KEY)
+                .setS3AccessKey(MINIO_ACCESS_KEY)
+                .setS3SecretKey(MINIO_SECRET_KEY)
                 .setBucketName(hiveMinioDataLake.getBucketName());
     }
 
@@ -92,42 +88,56 @@ public final class S3HiveQueryRunner
             extends HiveQueryRunner.Builder<Builder>
     {
         private HostAndPort hiveMetastoreEndpoint;
-        private Duration metastoreTimeout = new Duration(10, TimeUnit.SECONDS);
+        private Duration thriftMetastoreTimeout = TestingTokenAwareMetastoreClientFactory.TIMEOUT;
+        private ThriftMetastoreConfig thriftMetastoreConfig = new ThriftMetastoreConfig();
         private String s3Endpoint;
         private String s3AccessKey;
         private String s3SecretKey;
         private String bucketName;
 
+        @CanIgnoreReturnValue
         public Builder setHiveMetastoreEndpoint(HostAndPort hiveMetastoreEndpoint)
         {
             this.hiveMetastoreEndpoint = requireNonNull(hiveMetastoreEndpoint, "hiveMetastoreEndpoint is null");
             return this;
         }
 
-        public Builder setMetastoreTimeout(Duration metastoreTimeout)
+        @CanIgnoreReturnValue
+        public Builder setThriftMetastoreTimeout(Duration thriftMetastoreTimeout)
         {
-            this.metastoreTimeout = metastoreTimeout;
+            this.thriftMetastoreTimeout = requireNonNull(thriftMetastoreTimeout, "thriftMetastoreTimeout is null");
             return this;
         }
 
+        @CanIgnoreReturnValue
+        public Builder setThriftMetastoreConfig(ThriftMetastoreConfig thriftMetastoreConfig)
+        {
+            this.thriftMetastoreConfig = requireNonNull(thriftMetastoreConfig, "thriftMetastoreConfig is null");
+            return this;
+        }
+
+        @CanIgnoreReturnValue
         public Builder setS3Endpoint(String s3Endpoint)
         {
             this.s3Endpoint = requireNonNull(s3Endpoint, "s3Endpoint is null");
             return this;
         }
 
+        @CanIgnoreReturnValue
         public Builder setS3AccessKey(String s3AccessKey)
         {
             this.s3AccessKey = requireNonNull(s3AccessKey, "s3AccessKey is null");
             return this;
         }
 
+        @CanIgnoreReturnValue
         public Builder setS3SecretKey(String s3SecretKey)
         {
             this.s3SecretKey = requireNonNull(s3SecretKey, "s3SecretKey is null");
             return this;
         }
 
+        @CanIgnoreReturnValue
         public Builder setBucketName(String bucketName)
         {
             this.bucketName = requireNonNull(bucketName, "bucketName is null");
@@ -151,25 +161,29 @@ public final class S3HiveQueryRunner
             addHiveProperty("hive.s3.aws-secret-key", s3SecretKey);
             addHiveProperty("hive.s3.path-style-access", "true");
             setMetastore(distributedQueryRunner -> new BridgingHiveMetastore(
-                            new ThriftHiveMetastore(
-                                    new TestingMetastoreLocator(
-                                            Optional.empty(),
-                                            hiveMetastoreEndpoint,
-                                            metastoreTimeout),
-                                    new HiveMetastoreConfig().isHideDeltaLakeTables(),
-                                    new HiveConfig().isTranslateHiveViews(),
-                                    new ThriftMetastoreConfig(),
-                                    new HdfsEnvironment(new HiveHdfsConfiguration(
-                                            new HdfsConfigurationInitializer(
-                                                    new HdfsConfig(),
-                                                    ImmutableSet.of()),
-                                            ImmutableSet.of()),
-                                            new HdfsConfig(),
-                                            new NoHdfsAuthentication()),
-                                    false),
-                            new HiveIdentity(distributedQueryRunner.getDefaultSession().getIdentity().toConnectorIdentity())));
+                    testingThriftHiveMetastoreBuilder()
+                            .metastoreClient(hiveMetastoreEndpoint, thriftMetastoreTimeout)
+                            .thriftMetastoreConfig(thriftMetastoreConfig)
+                            .build()));
             setInitialSchemasLocationBase("s3a://" + bucketName); // cannot use s3:// as Hive metastore is not configured to accept it
             return super.build();
         }
+    }
+
+    public static void main(String[] args)
+            throws Exception
+    {
+        HiveMinioDataLake hiveMinioDataLake = new HiveMinioDataLake("tpch");
+        hiveMinioDataLake.start();
+
+        DistributedQueryRunner queryRunner = S3HiveQueryRunner.builder(hiveMinioDataLake)
+                .setExtraProperties(ImmutableMap.of("http-server.http.port", "8080"))
+                .setHiveProperties(ImmutableMap.of("hive.security", ALLOW_ALL))
+                .setSkipTimezoneSetup(true)
+                .setInitialTables(TpchTable.getTables())
+                .build();
+        Logger log = Logger.get(S3HiveQueryRunner.class);
+        log.info("======== SERVER STARTED ========");
+        log.info("\n====\n%s\n====", queryRunner.getCoordinator().getBaseUrl());
     }
 }

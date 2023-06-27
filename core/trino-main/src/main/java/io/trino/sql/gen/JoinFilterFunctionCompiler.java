@@ -18,6 +18,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 import io.airlift.bytecode.BytecodeBlock;
 import io.airlift.bytecode.BytecodeNode;
 import io.airlift.bytecode.ClassDefinition;
@@ -45,8 +46,6 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
 
-import javax.inject.Inject;
-
 import java.lang.reflect.Constructor;
 import java.util.List;
 import java.util.Map;
@@ -72,18 +71,18 @@ import static java.util.Objects.requireNonNull;
 public class JoinFilterFunctionCompiler
 {
     private final FunctionManager functionManager;
+    private final NonEvictableLoadingCache<JoinFilterCacheKey, JoinFilterFunctionFactory> joinFilterFunctionFactories;
 
     @Inject
     public JoinFilterFunctionCompiler(FunctionManager functionManager)
     {
-        this.functionManager = functionManager;
+        this.functionManager = requireNonNull(functionManager, "functionManager is null");
+        this.joinFilterFunctionFactories = buildNonEvictableCache(
+                CacheBuilder.newBuilder()
+                        .recordStats()
+                        .maximumSize(1000),
+                CacheLoader.from(key -> internalCompileFilterFunctionFactory(key.getFilter(), key.getLeftBlocksSize())));
     }
-
-    private final NonEvictableLoadingCache<JoinFilterCacheKey, JoinFilterFunctionFactory> joinFilterFunctionFactories = buildNonEvictableCache(
-            CacheBuilder.newBuilder()
-                    .recordStats()
-                    .maximumSize(1000),
-            CacheLoader.from(key -> internalCompileFilterFunctionFactory(key.getFilter(), key.getLeftBlocksSize())));
 
     @Managed
     @Nested

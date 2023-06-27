@@ -15,17 +15,18 @@ package io.trino.plugin.hive;
 
 import io.trino.Session;
 import io.trino.operator.RetryPolicy;
-import io.trino.testing.BaseFailureRecoveryTest;
-import org.testng.annotations.Test;
+import io.trino.testing.ExtendedFailureRecoveryTest;
+import org.testng.annotations.DataProvider;
 
 import java.util.List;
 import java.util.Optional;
 
+import static io.trino.plugin.hive.HiveMetadata.MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE;
 import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public abstract class BaseHiveFailureRecoveryTest
-        extends BaseFailureRecoveryTest
+        extends ExtendedFailureRecoveryTest
 {
     protected BaseHiveFailureRecoveryTest(RetryPolicy retryPolicy)
     {
@@ -50,47 +51,67 @@ public abstract class BaseHiveFailureRecoveryTest
     }
 
     @Override
-    // delete is unsupported for non ACID tables
-    public void testDelete()
+    @DataProvider(name = "parallelTests", parallel = true)
+    public Object[][] parallelTests()
     {
-        assertThatThrownBy(super::testDelete)
-                .hasMessageContaining("Deletes must match whole partitions for non-transactional tables");
+        return moreParallelTests(super.parallelTests(),
+                parallelTest("testCreatePartitionedTable", this::testCreatePartitionedTable),
+                parallelTest("testInsertIntoNewPartition", this::testInsertIntoNewPartition),
+                parallelTest("testInsertIntoExistingPartition", this::testInsertIntoExistingPartition),
+                parallelTest("testInsertIntoNewPartitionBucketed", this::testInsertIntoNewPartitionBucketed),
+                parallelTest("testInsertIntoExistingPartitionBucketed", this::testInsertIntoExistingPartitionBucketed),
+                parallelTest("testReplaceExistingPartition", this::testReplaceExistingPartition),
+                parallelTest("testDeletePartitionWithSubquery", this::testDeletePartitionWithSubquery));
     }
 
     @Override
     // delete is unsupported for non ACID tables
-    public void testDeleteWithSubquery()
+    protected void testDelete()
     {
         assertThatThrownBy(super::testDelete)
-                .hasMessageContaining("Deletes must match whole partitions for non-transactional tables");
+                .hasMessageContaining(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
+    }
+
+    @Override
+    // delete is unsupported for non ACID tables
+    protected void testDeleteWithSubquery()
+    {
+        assertThatThrownBy(super::testDelete)
+                .hasMessageContaining(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
     }
 
     @Override
     // update is unsupported for non ACID tables
-    public void testUpdate()
+    protected void testUpdate()
     {
         assertThatThrownBy(super::testUpdate)
-                .hasMessageContaining("Hive update is only supported for ACID transactional tables");
+                .hasMessageContaining(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
     }
 
     @Override
     // update is unsupported for non ACID tables
-    public void testUpdateWithSubquery()
+    protected void testUpdateWithSubquery()
     {
         assertThatThrownBy(super::testUpdateWithSubquery)
-                .hasMessageContaining("Hive update is only supported for ACID transactional tables");
+                .hasMessageContaining(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
+    }
+
+    @Override
+    protected void testMerge()
+    {
+        assertThatThrownBy(super::testMerge)
+                .hasMessageContaining("Modifying Hive table rows is only supported for transactional tables");
     }
 
     @Override
     // materialized views are currently not implemented by Hive connector
-    public void testRefreshMaterializedView()
+    protected void testRefreshMaterializedView()
     {
         assertThatThrownBy(super::testRefreshMaterializedView)
                 .hasMessageContaining("This connector does not support creating materialized views");
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testCreatePartitionedTable()
+    protected void testCreatePartitionedTable()
     {
         testTableModification(
                 Optional.empty(),
@@ -98,8 +119,7 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoNewPartition()
+    protected void testInsertIntoNewPartition()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioned_by = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders"),
@@ -107,8 +127,7 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoExistingPartition()
+    protected void testInsertIntoExistingPartition()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioned_by = ARRAY['p']) AS SELECT *, 'partition1' p FROM orders"),
@@ -116,8 +135,7 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoNewPartitionBucketed()
+    protected void testInsertIntoNewPartitionBucketed()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioned_by = ARRAY['p'], bucketed_by = ARRAY['orderkey'], bucket_count = 4) AS SELECT *, 'partition1' p FROM orders"),
@@ -125,8 +143,7 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testInsertIntoExistingPartitionBucketed()
+    protected void testInsertIntoExistingPartitionBucketed()
     {
         testTableModification(
                 Optional.of("CREATE TABLE <table> WITH (partitioned_by = ARRAY['p'], bucketed_by = ARRAY['orderkey'], bucket_count = 4) AS SELECT *, 'partition1' p FROM orders"),
@@ -134,8 +151,7 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testReplaceExistingPartition()
+    protected void testReplaceExistingPartition()
     {
         testTableModification(
                 Optional.of(Session.builder(getQueryRunner().getDefaultSession())
@@ -146,14 +162,13 @@ public abstract class BaseHiveFailureRecoveryTest
                 Optional.of("DROP TABLE <table>"));
     }
 
-    @Test(invocationCount = INVOCATION_COUNT)
-    public void testDeletePartitionWithSubquery()
+    protected void testDeletePartitionWithSubquery()
     {
         assertThatThrownBy(() -> {
             testTableModification(
                     Optional.of("CREATE TABLE <table> WITH (partitioned_by = ARRAY['p']) AS SELECT *, 0 p FROM orders"),
                     "DELETE FROM <table> WHERE p = (SELECT min(nationkey) FROM nation)",
                     Optional.of("DROP TABLE <table>"));
-        }).hasMessageContaining("Deletes must match whole partitions for non-transactional tables");
+        }).hasMessageContaining(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
     }
 }

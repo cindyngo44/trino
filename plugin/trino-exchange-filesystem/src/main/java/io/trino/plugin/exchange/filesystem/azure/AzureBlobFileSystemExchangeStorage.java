@@ -13,23 +13,21 @@
  */
 package io.trino.plugin.exchange.filesystem.azure;
 
-import com.azure.core.http.rest.PagedFlux;
-import com.azure.core.http.rest.PagedIterable;
 import com.azure.core.http.rest.PagedResponse;
 import com.azure.core.util.BinaryData;
 import com.azure.identity.DefaultAzureCredentialBuilder;
-import com.azure.storage.blob.BlobContainerClient;
+import com.azure.storage.blob.BlobContainerAsyncClient;
 import com.azure.storage.blob.BlobServiceAsyncClient;
-import com.azure.storage.blob.BlobServiceClient;
 import com.azure.storage.blob.BlobServiceClientBuilder;
 import com.azure.storage.blob.batch.BlobBatchAsyncClient;
 import com.azure.storage.blob.batch.BlobBatchClientBuilder;
 import com.azure.storage.blob.models.BlobItem;
 import com.azure.storage.blob.models.BlobRange;
-import com.azure.storage.blob.models.CustomerProvidedKey;
 import com.azure.storage.blob.models.DeleteSnapshotsOptionType;
 import com.azure.storage.blob.models.ListBlobsOptions;
 import com.azure.storage.blob.specialized.BlockBlobAsyncClient;
+import com.azure.storage.common.policy.RequestRetryOptions;
+import com.azure.storage.common.policy.RetryPolicyType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Lists;
@@ -38,6 +36,7 @@ import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.Inject;
 import io.airlift.slice.SizeOf;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceInput;
@@ -47,21 +46,19 @@ import io.trino.plugin.exchange.filesystem.ExchangeStorageReader;
 import io.trino.plugin.exchange.filesystem.ExchangeStorageWriter;
 import io.trino.plugin.exchange.filesystem.FileStatus;
 import io.trino.plugin.exchange.filesystem.FileSystemExchangeStorage;
-import org.openjdk.jol.info.ClassLayout;
+import jakarta.annotation.PreDestroy;
 import reactor.core.publisher.Flux;
 
-import javax.annotation.PreDestroy;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
-import javax.crypto.SecretKey;
-import javax.inject.Inject;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -80,6 +77,7 @@ import static io.airlift.concurrent.MoreFutures.asVoid;
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 import static io.airlift.concurrent.MoreFutures.toListenableFuture;
 import static io.airlift.slice.SizeOf.estimatedSizeOf;
+import static io.airlift.slice.SizeOf.instanceSize;
 import static io.trino.plugin.exchange.filesystem.FileSystemExchangeFutures.translateFailures;
 import static io.trino.plugin.exchange.filesystem.FileSystemExchangeManager.PATH_SEPARATOR;
 import static java.lang.Math.min;
@@ -92,25 +90,22 @@ public class AzureBlobFileSystemExchangeStorage
         implements FileSystemExchangeStorage
 {
     private final int blockSize;
-    private final BlobServiceClient blobServiceClient;
     private final BlobServiceAsyncClient blobServiceAsyncClient;
 
     @Inject
     public AzureBlobFileSystemExchangeStorage(ExchangeAzureConfig config)
     {
-        requireNonNull(config, "config is null");
         this.blockSize = toIntExact(config.getAzureStorageBlockSize().toBytes());
-        Optional<String> connectionString = config.getAzureStorageConnectionString();
 
-        BlobServiceClientBuilder blobServiceClientBuilder = new BlobServiceClientBuilder();
+        BlobServiceClientBuilder blobServiceClientBuilder = new BlobServiceClientBuilder()
+                .retryOptions(new RequestRetryOptions(RetryPolicyType.EXPONENTIAL, config.getMaxErrorRetries(), (Integer) null, null, null, null));
+        Optional<String> connectionString = config.getAzureStorageConnectionString();
         if (connectionString.isPresent()) {
             blobServiceClientBuilder.connectionString(connectionString.get());
         }
         else {
             blobServiceClientBuilder.credential(new DefaultAzureCredentialBuilder().build());
         }
-
-        this.blobServiceClient = blobServiceClientBuilder.buildClient();
         this.blobServiceAsyncClient = blobServiceClientBuilder.buildAsyncClient();
     }
 
@@ -122,13 +117,13 @@ public class AzureBlobFileSystemExchangeStorage
     }
 
     @Override
-    public ExchangeStorageReader createExchangeStorageReader(Queue<ExchangeSourceFile> sourceFiles, int maxPageStorageSize)
+    public ExchangeStorageReader createExchangeStorageReader(List<ExchangeSourceFile> sourceFiles, int maxPageStorageSize)
     {
         return new AzureExchangeStorageReader(blobServiceAsyncClient, sourceFiles, blockSize, maxPageStorageSize);
     }
 
     @Override
-    public ExchangeStorageWriter createExchangeStorageWriter(URI file, Optional<SecretKey> secretKey)
+    public ExchangeStorageWriter createExchangeStorageWriter(URI file)
     {
         String containerName = getContainerName(file);
         String blobName = getPath(file);
@@ -136,17 +131,7 @@ public class AzureBlobFileSystemExchangeStorage
                 .getBlobContainerAsyncClient(containerName)
                 .getBlobAsyncClient(blobName)
                 .getBlockBlobAsyncClient();
-        if (secretKey.isPresent()) {
-            blockBlobAsyncClient = blockBlobAsyncClient.getCustomerProvidedKeyAsyncClient(new CustomerProvidedKey(secretKey.get().getEncoded()));
-        }
         return new AzureExchangeStorageWriter(blockBlobAsyncClient, blockSize);
-    }
-
-    @Override
-    public boolean exists(URI file)
-            throws IOException
-    {
-        return blobServiceClient.getBlobContainerClient(getContainerName(file)).getBlobClient(getPath(file)).exists();
     }
 
     @Override
@@ -167,12 +152,12 @@ public class AzureBlobFileSystemExchangeStorage
         ImmutableMultimap.Builder<String, ListenableFuture<List<PagedResponse<BlobItem>>>> containerToListObjectsFuturesBuilder = ImmutableMultimap.builder();
         directories.forEach(dir -> containerToListObjectsFuturesBuilder.put(
                 getContainerName(dir),
-                toListenableFuture(listObjectsRecursively(dir).byPage().collectList().toFuture())));
+                listObjectsRecursively(dir)));
         Multimap<String, ListenableFuture<List<PagedResponse<BlobItem>>>> containerToListObjectsFutures = containerToListObjectsFuturesBuilder.build();
 
         ImmutableList.Builder<ListenableFuture<List<Void>>> deleteObjectsFutures = ImmutableList.builder();
         for (String containerName : containerToListObjectsFutures.keySet()) {
-            BlobContainerClient blobContainerClient = blobServiceClient.getBlobContainerClient(containerName);
+            BlobContainerAsyncClient blobContainerAsyncClient = blobServiceAsyncClient.getBlobContainerAsyncClient(containerName);
             deleteObjectsFutures.add(Futures.transformAsync(
                     Futures.allAsList(containerToListObjectsFutures.get(containerName)),
                     nestedPagedResponseList -> {
@@ -180,7 +165,7 @@ public class AzureBlobFileSystemExchangeStorage
                         for (List<PagedResponse<BlobItem>> pagedResponseList : nestedPagedResponseList) {
                             for (PagedResponse<BlobItem> pagedResponse : pagedResponseList) {
                                 pagedResponse.getValue().forEach(blobItem -> {
-                                    blobUrls.add(blobContainerClient.getBlobClient(blobItem.getName()).getBlobUrl());
+                                    blobUrls.add(blobContainerAsyncClient.getBlobAsyncClient(blobItem.getName()).getBlobUrl());
                                 });
                             }
                         }
@@ -193,41 +178,26 @@ public class AzureBlobFileSystemExchangeStorage
     }
 
     @Override
-    public List<FileStatus> listFiles(URI dir)
-            throws IOException
+    public ListenableFuture<List<FileStatus>> listFilesRecursively(URI dir)
     {
-        ImmutableList.Builder<FileStatus> builder = ImmutableList.builder();
-        try {
-            for (BlobItem blobItem : listObjects(dir)) {
-                if (blobItem.isPrefix() != Boolean.TRUE) {
-                    builder.add(new FileStatus(
-                            new URI(dir.getScheme(), dir.getUserInfo(), dir.getHost(), -1, PATH_SEPARATOR + blobItem.getName(), null, dir.getFragment()).toString(),
-                            blobItem.getProperties().getContentLength()));
+        return Futures.transform(listObjectsRecursively(dir), pagedResponseList -> {
+            ImmutableList.Builder<FileStatus> fileStatuses = ImmutableList.builder();
+            for (PagedResponse<BlobItem> pagedResponse : pagedResponseList) {
+                for (BlobItem blobItem : pagedResponse.getValue()) {
+                    if (blobItem.isPrefix() != Boolean.TRUE) {
+                        URI uri;
+                        try {
+                            uri = new URI(dir.getScheme(), dir.getUserInfo(), dir.getHost(), -1, PATH_SEPARATOR + blobItem.getName(), null, dir.getFragment());
+                        }
+                        catch (URISyntaxException e) {
+                            throw new IllegalArgumentException(e);
+                        }
+                        fileStatuses.add(new FileStatus(uri.toString(), blobItem.getProperties().getContentLength()));
+                    }
                 }
             }
-        }
-        catch (URISyntaxException e) {
-            throw new IllegalArgumentException(e);
-        }
-        return builder.build();
-    }
-
-    @Override
-    public List<URI> listDirectories(URI dir)
-            throws IOException
-    {
-        ImmutableList.Builder<URI> builder = ImmutableList.builder();
-        try {
-            for (BlobItem blobItem : listObjects(dir)) {
-                if (blobItem.isPrefix() == Boolean.TRUE) {
-                    builder.add(new URI(dir.getScheme(), dir.getUserInfo(), dir.getHost(), -1, PATH_SEPARATOR + blobItem.getName(), null, dir.getFragment()));
-                }
-            }
-        }
-        catch (URISyntaxException e) {
-            throw new IllegalArgumentException(e);
-        }
-        return builder.build();
+            return fileStatuses.build();
+        }, directExecutor());
     }
 
     @Override
@@ -243,34 +213,24 @@ public class AzureBlobFileSystemExchangeStorage
     {
     }
 
-    private PagedIterable<BlobItem> listObjects(URI dir)
-    {
-        checkArgument(isDirectory(dir), "listObjects called on file uri %s", dir);
-
-        String containerName = getContainerName(dir);
-        String directoryPath = getPath(dir);
-        if (!directoryPath.isEmpty()) {
-            directoryPath += PATH_SEPARATOR;
-        }
-
-        return blobServiceClient.getBlobContainerClient(containerName).listBlobsByHierarchy(PATH_SEPARATOR, (new ListBlobsOptions()).setPrefix(directoryPath), null);
-    }
-
-    private PagedFlux<BlobItem> listObjectsRecursively(URI dir)
+    private ListenableFuture<List<PagedResponse<BlobItem>>> listObjectsRecursively(URI dir)
     {
         checkArgument(isDirectory(dir), "listObjectsRecursively called on file uri %s", dir);
 
         String containerName = getContainerName(dir);
         String directoryPath = getPath(dir);
 
-        return blobServiceAsyncClient
+        return toListenableFuture(blobServiceAsyncClient
                 .getBlobContainerAsyncClient(containerName)
-                .listBlobsByHierarchy(null, (new ListBlobsOptions()).setPrefix(directoryPath));
+                .listBlobsByHierarchy(null, (new ListBlobsOptions()).setPrefix(directoryPath))
+                .byPage()
+                .collectList()
+                .toFuture());
     }
 
     private ListenableFuture<List<Void>> deleteObjects(List<String> blobUrls)
     {
-        BlobBatchAsyncClient blobBatchAsyncClient = new BlobBatchClientBuilder(blobServiceClient).buildAsyncClient();
+        BlobBatchAsyncClient blobBatchAsyncClient = new BlobBatchClientBuilder(blobServiceAsyncClient).buildAsyncClient();
         // deleteBlobs can delete at most 256 blobs at a time
         return Futures.allAsList(Lists.partition(blobUrls, 256).stream()
                 .map(list -> toListenableFuture(blobBatchAsyncClient.deleteBlobs(list, DeleteSnapshotsOptionType.INCLUDE).then().toFuture()))
@@ -305,9 +265,10 @@ public class AzureBlobFileSystemExchangeStorage
     private static class AzureExchangeStorageReader
             implements ExchangeStorageReader
     {
-        private static final int INSTANCE_SIZE = ClassLayout.parseClass(AzureExchangeStorageReader.class).instanceSize();
+        private static final int INSTANCE_SIZE = instanceSize(AzureExchangeStorageReader.class);
 
         private final BlobServiceAsyncClient blobServiceAsyncClient;
+        @GuardedBy("this")
         private final Queue<ExchangeSourceFile> sourceFiles;
         private final int blockSize;
         private final int bufferSize;
@@ -326,12 +287,12 @@ public class AzureBlobFileSystemExchangeStorage
 
         public AzureExchangeStorageReader(
                 BlobServiceAsyncClient blobServiceAsyncClient,
-                Queue<ExchangeSourceFile> sourceFiles,
+                List<ExchangeSourceFile> sourceFiles,
                 int blockSize,
                 int maxPageStorageSize)
         {
             this.blobServiceAsyncClient = requireNonNull(blobServiceAsyncClient, "blobServiceAsyncClient is null");
-            this.sourceFiles = requireNonNull(sourceFiles, "sourceFiles is null");
+            this.sourceFiles = new ArrayDeque<>(requireNonNull(sourceFiles, "sourceFiles is null"));
             this.blockSize = blockSize;
             // Make sure buffer can accommodate at least one complete Slice, and keep reads aligned to block boundaries
             this.bufferSize = maxPageStorageSize + blockSize;
@@ -408,6 +369,7 @@ public class AzureBlobFileSystemExchangeStorage
             inProgressReadFuture = immediateVoidFuture(); // such that we don't retain reference to the buffer
         }
 
+        @GuardedBy("this")
         private void fillBuffer()
         {
             if (currentFile == null || fileOffset == currentFile.getFileSize()) {
@@ -445,10 +407,6 @@ public class AzureBlobFileSystemExchangeStorage
                         .getBlobContainerAsyncClient(getContainerName(currentFile.getFileUri()))
                         .getBlobAsyncClient(getPath(currentFile.getFileUri()))
                         .getBlockBlobAsyncClient();
-                Optional<SecretKey> secretKey = currentFile.getSecretKey();
-                if (secretKey.isPresent()) {
-                    blockBlobAsyncClient = blockBlobAsyncClient.getCustomerProvidedKeyAsyncClient(new CustomerProvidedKey(secretKey.get().getEncoded()));
-                }
                 for (int i = 0; i < readableBlocks && fileOffset < fileSize; ++i) {
                     int length = (int) min(blockSize, fileSize - fileOffset);
 
@@ -493,7 +451,7 @@ public class AzureBlobFileSystemExchangeStorage
     private static class AzureExchangeStorageWriter
             implements ExchangeStorageWriter
     {
-        private static final int INSTANCE_SIZE = ClassLayout.parseClass(AzureExchangeStorageWriter.class).instanceSize();
+        private static final int INSTANCE_SIZE = instanceSize(AzureExchangeStorageWriter.class);
 
         private final BlockBlobAsyncClient blockBlobAsyncClient;
         private final int blockSize;

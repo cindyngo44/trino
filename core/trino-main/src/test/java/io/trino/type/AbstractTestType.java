@@ -14,6 +14,7 @@
 package io.trino.type;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
@@ -23,6 +24,8 @@ import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.block.TestingBlockEncodingSerde;
 import io.trino.spi.type.ArrayType;
+import io.trino.spi.type.LongTimestamp;
+import io.trino.spi.type.LongTimestampWithTimeZone;
 import io.trino.spi.type.MapType;
 import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
@@ -54,9 +57,11 @@ import static io.trino.spi.connector.SortOrder.DESC_NULLS_FIRST;
 import static io.trino.spi.connector.SortOrder.DESC_NULLS_LAST;
 import static io.trino.spi.function.InvocationConvention.InvocationArgumentConvention.BLOCK_POSITION;
 import static io.trino.spi.function.InvocationConvention.InvocationArgumentConvention.NEVER_NULL;
+import static io.trino.spi.function.InvocationConvention.InvocationReturnConvention.DEFAULT_ON_NULL;
 import static io.trino.spi.function.InvocationConvention.InvocationReturnConvention.FAIL_ON_NULL;
 import static io.trino.spi.function.InvocationConvention.InvocationReturnConvention.NULLABLE_RETURN;
 import static io.trino.spi.function.InvocationConvention.simpleConvention;
+import static io.trino.spi.type.TimeZoneKey.UTC_KEY;
 import static io.trino.spi.type.TypeUtils.readNativeValue;
 import static io.trino.sql.ExpressionUtils.isEffectivelyLiteral;
 import static io.trino.testing.TestingConnectorSession.SESSION;
@@ -65,6 +70,7 @@ import static io.trino.util.StructuralTestUtil.mapBlockOf;
 import static java.lang.String.format;
 import static java.util.Collections.unmodifiableSortedMap;
 import static java.util.Objects.requireNonNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -77,7 +83,7 @@ public abstract class AbstractTestType
 
     private final Class<?> objectValueType;
     private final Block testBlock;
-    private final Type type;
+    protected final Type type;
     private final TypeOperators typeOperators;
     protected final BlockTypeOperators blockTypeOperators;
     private final BlockPositionEqual equalOperator;
@@ -186,6 +192,46 @@ public abstract class AbstractTestType
         }
     }
 
+    @Test
+    public void testRange()
+    {
+        assertThat(type.getRange())
+                .isEmpty();
+    }
+
+    @Test
+    public void testPreviousValue()
+    {
+        Object sampleValue = getSampleValue();
+        if (!type.isOrderable()) {
+            assertThatThrownBy(() -> type.getPreviousValue(sampleValue))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Type is not orderable: " + type);
+            return;
+        }
+        assertThat(type.getPreviousValue(sampleValue))
+                .isEmpty();
+    }
+
+    @Test
+    public void testNextValue()
+    {
+        Object sampleValue = getSampleValue();
+        if (!type.isOrderable()) {
+            assertThatThrownBy(() -> type.getNextValue(sampleValue))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Type is not orderable: " + type);
+            return;
+        }
+        assertThat(type.getNextValue(sampleValue))
+                .isEmpty();
+    }
+
+    protected Object getSampleValue()
+    {
+        return requireNonNull(Iterables.get(expectedStackValues.values(), 0), "sample value is null");
+    }
+
     protected void assertPositionEquals(Block block, int position, Object expectedStackValue, Object expectedObjectValue)
     {
         long hash = 0;
@@ -229,6 +275,10 @@ public abstract class AbstractTestType
                     .hasMessageContaining("is not comparable");
 
             assertThatThrownBy(() -> typeOperators.getEqualOperator(type, simpleConvention(NULLABLE_RETURN, BLOCK_POSITION, BLOCK_POSITION)))
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessageContaining("is not comparable");
+
+            assertThatThrownBy(() -> typeOperators.getEqualOperator(type, simpleConvention(DEFAULT_ON_NULL, BLOCK_POSITION, BLOCK_POSITION)))
                     .isInstanceOf(UnsupportedOperationException.class)
                     .hasMessageContaining("is not comparable");
 
@@ -323,95 +373,95 @@ public abstract class AbstractTestType
     {
         assertThatThrownBy(() -> type.getObjectValue(SESSION, block, -1))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
         assertThatThrownBy(() -> type.getObjectValue(SESSION, block, block.getPositionCount()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
 
         if (type.isComparable()) {
             assertThatThrownBy(() -> hashCodeOperator.hashCode(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> hashCodeOperator.hashCode(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
 
             assertThatThrownBy(() -> xxHash64Operator.xxHash64(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> xxHash64Operator.xxHash64(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
 
         if (type.isComparable() && !(type instanceof UnknownType)) {
             Block other = toBlock(getNonNullValue());
             assertThatThrownBy(() -> equalOperator.equal(block, -1, other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> equalOperator.equal(block, block.getPositionCount(), other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
 
             assertThatThrownBy(() -> distinctFromOperator.isDistinctFrom(block, -1, other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> distinctFromOperator.isDistinctFrom(block, block.getPositionCount(), other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
 
         if (type.isOrderable() && !(type instanceof UnknownType)) {
             Block other = toBlock(getNonNullValue());
             assertThatThrownBy(() -> blockTypeOperators.generateBlockPositionOrdering(type, ASC_NULLS_FIRST).order(block, -1, other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> blockTypeOperators.generateBlockPositionOrdering(type, ASC_NULLS_FIRST).order(block, block.getPositionCount(), other, 0))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
 
         if (type.getJavaType() == boolean.class) {
             assertThatThrownBy(() -> type.getBoolean(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> type.getBoolean(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
         else if (type.getJavaType() == long.class) {
             assertThatThrownBy(() -> type.getLong(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> type.getLong(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
         else if (type.getJavaType() == double.class) {
             assertThatThrownBy(() -> type.getDouble(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> type.getDouble(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("position is not valid");
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
         else if (type.getJavaType() == Slice.class) {
             assertThatThrownBy(() -> type.getSlice(block, -1))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position -1 in block with %d positions)", block.getPositionCount()));
+                    .hasMessage("Invalid position -1 in block with %d positions", block.getPositionCount());
 
             assertThatThrownBy(() -> type.getSlice(block, block.getPositionCount()))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageMatching(format("(position is not valid|Invalid position %d in block with %d positions)", block.getPositionCount(), block.getPositionCount()));
+                    .hasMessage("Invalid position %d in block with %d positions", block.getPositionCount(), block.getPositionCount());
         }
     }
 
@@ -473,14 +523,18 @@ public abstract class AbstractTestType
         if (type.getJavaType() == Slice.class) {
             return Slices.utf8Slice("_");
         }
-        if (type instanceof ArrayType) {
-            ArrayType arrayType = (ArrayType) type;
+        if (type.getJavaType() == LongTimestamp.class) {
+            return new LongTimestamp(1, 0);
+        }
+        if (type.getJavaType() == LongTimestampWithTimeZone.class) {
+            return LongTimestampWithTimeZone.fromEpochSecondsAndFraction(1, 0, UTC_KEY);
+        }
+        if (type instanceof ArrayType arrayType) {
             Type elementType = arrayType.getElementType();
             Object elementNonNullValue = getNonNullValueForType(elementType);
             return arrayBlockOf(elementType, elementNonNullValue);
         }
-        if (type instanceof MapType) {
-            MapType mapType = (MapType) type;
+        if (type instanceof MapType mapType) {
             Type keyType = mapType.getKeyType();
             Type valueType = mapType.getValueType();
             Object keyNonNullValue = getNonNullValueForType(keyType);
@@ -488,8 +542,7 @@ public abstract class AbstractTestType
             Map<?, ?> map = ImmutableMap.of(keyNonNullValue, valueNonNullValue);
             return mapBlockOf(keyType, valueType, map);
         }
-        if (type instanceof RowType) {
-            RowType rowType = (RowType) type;
+        if (type instanceof RowType rowType) {
             List<Type> elementTypes = rowType.getTypeParameters();
             Object[] elementNonNullValues = elementTypes.stream().map(AbstractTestType::getNonNullValueForType).toArray(Object[]::new);
             return toRow(elementTypes, elementNonNullValues);

@@ -15,9 +15,11 @@ package io.trino.execution;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import io.trino.connector.CatalogName;
+import io.trino.client.NodeVersion;
+import io.trino.connector.CatalogServiceProvider;
 import io.trino.connector.MockConnectorFactory;
 import io.trino.execution.warnings.WarningCollector;
+import io.trino.metadata.CatalogProcedures;
 import io.trino.metadata.Metadata;
 import io.trino.metadata.ProcedureRegistry;
 import io.trino.plugin.base.security.AllowAllSystemAccessControl;
@@ -48,12 +50,14 @@ import java.util.function.Function;
 
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.trino.SessionTestUtils.TEST_SESSION;
-import static io.trino.spi.block.MethodHandleUtil.methodHandle;
+import static io.trino.execution.querystats.PlanOptimizersStatsCollector.createPlanOptimizersStatsCollector;
 import static io.trino.sql.planner.TestingPlannerContext.plannerContextBuilder;
 import static io.trino.testing.TestingAccessControlManager.TestingPrivilegeType.INSERT_TABLE;
 import static io.trino.testing.TestingAccessControlManager.privilege;
 import static io.trino.testing.TestingEventListenerManager.emptyEventListenerManager;
+import static io.trino.testing.TestingHandles.TEST_CATALOG_NAME;
 import static io.trino.testing.TestingSession.testSessionBuilder;
+import static io.trino.util.Reflection.methodHandle;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -70,7 +74,7 @@ public class TestCallTask
     public void init()
     {
         queryRunner = LocalQueryRunner.builder(TEST_SESSION).build();
-        queryRunner.createCatalog("test", MockConnectorFactory.create(), ImmutableMap.of());
+        queryRunner.createCatalog(TEST_CATALOG_NAME, MockConnectorFactory.create(), ImmutableMap.of());
         executor = newCachedThreadPool(daemonThreadsNamed("call-task-test-%s"));
     }
 
@@ -79,6 +83,7 @@ public class TestCallTask
     {
         if (queryRunner != null) {
             queryRunner.close();
+            queryRunner = null;
         }
         executor.shutdownNow();
         executor = null;
@@ -103,7 +108,7 @@ public class TestCallTask
         assertThatThrownBy(
                 () -> executeCallTask(methodHandle(TestCallTask.class, "testingMethod"), transactionManager -> new DenyAllAccessControl()))
                 .isInstanceOf(AccessDeniedException.class)
-                .hasMessage("Access Denied: Cannot execute procedure test.test.testing_procedure");
+                .hasMessage("Access Denied: Cannot execute procedure test-catalog.test.testing_procedure");
 
         assertThat(invoked).isFalse();
     }
@@ -121,18 +126,19 @@ public class TestCallTask
                             return accessControl;
                         }))
                 .isInstanceOf(AccessDeniedException.class)
-                .hasMessage("Access Denied: Cannot insert into table test.test.testing_table");
+                .hasMessage("Access Denied: Cannot insert into table test-catalog.test.testing_table");
     }
 
     private void executeCallTask(MethodHandle methodHandle, Function<TransactionManager, AccessControl> accessControlProvider)
     {
         TransactionManager transactionManager = queryRunner.getTransactionManager();
-        ProcedureRegistry procedureRegistry = createProcedureRegistry(
-                new Procedure(
+        ProcedureRegistry procedureRegistry = new ProcedureRegistry(CatalogServiceProvider.singleton(
+                queryRunner.getCatalogHandle(TEST_CATALOG_NAME),
+                new CatalogProcedures(ImmutableList.of(new Procedure(
                         "test",
                         "testing_procedure",
                         ImmutableList.of(),
-                        methodHandle));
+                        methodHandle)))));
         AccessControl accessControl = accessControlProvider.apply(transactionManager);
 
         PlannerContext plannerContext = plannerContextBuilder()
@@ -146,13 +152,6 @@ public class TestCallTask
                         WarningCollector.NOOP);
     }
 
-    private static ProcedureRegistry createProcedureRegistry(Procedure procedure)
-    {
-        ProcedureRegistry procedureRegistry = new ProcedureRegistry();
-        procedureRegistry.addProcedures(new CatalogName("test"), ImmutableList.of(procedure));
-        return procedureRegistry;
-    }
-
     private QueryStateMachine stateMachine(TransactionManager transactionManager, Metadata metadata, AccessControl accessControl)
     {
         return QueryStateMachine.begin(
@@ -160,7 +159,7 @@ public class TestCallTask
                 "CALL testing_procedure()",
                 Optional.empty(),
                 testSessionBuilder()
-                        .setCatalog("test")
+                        .setCatalog(TEST_CATALOG_NAME)
                         .setSchema("test")
                         .build(),
                 URI.create("fake://uri"),
@@ -171,7 +170,10 @@ public class TestCallTask
                 executor,
                 metadata,
                 WarningCollector.NOOP,
-                Optional.empty());
+                createPlanOptimizersStatsCollector(),
+                Optional.empty(),
+                true,
+                new NodeVersion("test"));
     }
 
     public static void testingMethod()

@@ -14,7 +14,9 @@
 package io.trino.sql.analyzer;
 
 import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
 import io.trino.Session;
+import io.trino.connector.CatalogServiceProvider;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.metadata.AnalyzePropertyManager;
 import io.trino.metadata.SessionPropertyManager;
@@ -29,14 +31,13 @@ import io.trino.sql.parser.SqlParser;
 import io.trino.transaction.NoOpTransactionManager;
 import io.trino.transaction.TransactionManager;
 
-import javax.inject.Inject;
-
 import static java.util.Objects.requireNonNull;
 
 public class StatementAnalyzerFactory
 {
     private final PlannerContext plannerContext;
     private final SqlParser sqlParser;
+    private final SessionTimeProvider sessionTimeProvider;
     private final AccessControl accessControl;
     private final TransactionManager transactionManager;
     private final GroupProvider groupProvider;
@@ -51,6 +52,7 @@ public class StatementAnalyzerFactory
     public StatementAnalyzerFactory(
             PlannerContext plannerContext,
             SqlParser sqlParser,
+            SessionTimeProvider sessionTimeProvider,
             AccessControl accessControl,
             TransactionManager transactionManager,
             GroupProvider groupProvider,
@@ -63,6 +65,7 @@ public class StatementAnalyzerFactory
     {
         this.plannerContext = requireNonNull(plannerContext, "plannerContext is null");
         this.sqlParser = requireNonNull(sqlParser, "sqlParser is null");
+        this.sessionTimeProvider = requireNonNull(sessionTimeProvider, "sessionTimeProvider is null");
         this.accessControl = requireNonNull(accessControl, "accessControl is null");
         this.transactionManager = requireNonNull(transactionManager, "transactionManager is null");
         this.groupProvider = requireNonNull(groupProvider, "groupProvider is null");
@@ -79,6 +82,7 @@ public class StatementAnalyzerFactory
         return new StatementAnalyzerFactory(
                 plannerContext,
                 sqlParser,
+                sessionTimeProvider,
                 accessControl,
                 transactionManager,
                 groupProvider,
@@ -101,6 +105,7 @@ public class StatementAnalyzerFactory
                 analysis,
                 plannerContext,
                 sqlParser,
+                sessionTimeProvider,
                 groupProvider,
                 accessControl,
                 transactionManager,
@@ -124,14 +129,15 @@ public class StatementAnalyzerFactory
         return new StatementAnalyzerFactory(
                 plannerContext,
                 new SqlParser(),
+                SessionTimeProvider.DEFAULT,
                 accessControl,
                 new NoOpTransactionManager(),
                 user -> ImmutableSet.of(),
-                new TableProceduresRegistry(),
-                new TableFunctionRegistry(),
+                new TableProceduresRegistry(CatalogServiceProvider.fail("procedures are not supported in testing analyzer")),
+                new TableFunctionRegistry(CatalogServiceProvider.fail("table functions are not supported in testing analyzer")),
                 new SessionPropertyManager(),
                 tablePropertyManager,
                 analyzePropertyManager,
-                new TableProceduresPropertyManager());
+                new TableProceduresPropertyManager(CatalogServiceProvider.fail("procedures are not supported in testing analyzer")));
     }
 }

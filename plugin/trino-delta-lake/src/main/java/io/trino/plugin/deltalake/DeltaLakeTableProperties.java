@@ -14,20 +14,19 @@
 package io.trino.plugin.deltalake;
 
 import com.google.common.collect.ImmutableList;
+import com.google.inject.Inject;
 import io.trino.spi.TrinoException;
 import io.trino.spi.session.PropertyMetadata;
 import io.trino.spi.type.ArrayType;
-
-import javax.inject.Inject;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.StandardErrorCode.INVALID_TABLE_PROPERTY;
+import static io.trino.spi.session.PropertyMetadata.booleanProperty;
 import static io.trino.spi.session.PropertyMetadata.longProperty;
 import static io.trino.spi.session.PropertyMetadata.stringProperty;
 import static io.trino.spi.type.VarcharType.VARCHAR;
@@ -39,11 +38,7 @@ public class DeltaLakeTableProperties
     public static final String LOCATION_PROPERTY = "location";
     public static final String PARTITIONED_BY_PROPERTY = "partitioned_by";
     public static final String CHECKPOINT_INTERVAL_PROPERTY = "checkpoint_interval";
-    // TODO: This property represents the subset of columns to be analyzed. This exists mainly because there is no way
-    //       to pass the column names to ConnectorMetadata#getStatisticsCollectionMetadata; we should consider passing
-    //       ConnectorTableHandle instead of ConnectorTableMetadata as an argument since it makes more information
-    //       available (including the names of the columns to be analyzed)
-    public static final String ANALYZE_COLUMNS_PROPERTY = "$trino.analyze_columns";
+    public static final String CHANGE_DATA_FEED_ENABLED_PROPERTY = "change_data_feed_enabled";
 
     private final List<PropertyMetadata<?>> tableProperties;
 
@@ -64,13 +59,18 @@ public class DeltaLakeTableProperties
                         List.class,
                         ImmutableList.of(),
                         false,
-                        value -> ImmutableList.copyOf(((Collection<String>) value).stream()
+                        value -> ((Collection<String>) value).stream()
                                 .map(name -> name.toLowerCase(ENGLISH))
-                                .collect(Collectors.toList())),
+                                .collect(toImmutableList()),
                         value -> value))
                 .add(longProperty(
                         CHECKPOINT_INTERVAL_PROPERTY,
                         "Checkpoint interval",
+                        null,
+                        false))
+                .add(booleanProperty(
+                        CHANGE_DATA_FEED_ENABLED_PROPERTY,
+                        "Enables storing change data feed entries",
                         null,
                         false))
                 .build();
@@ -104,9 +104,8 @@ public class DeltaLakeTableProperties
         return checkpointInterval;
     }
 
-    @SuppressWarnings("unchecked")
-    public static Optional<Set<String>> getAnalyzeColumns(Map<String, Object> tableProperties)
+    public static Optional<Boolean> getChangeDataFeedEnabled(Map<String, Object> tableProperties)
     {
-        return Optional.ofNullable((Set<String>) tableProperties.get(ANALYZE_COLUMNS_PROPERTY));
+        return Optional.ofNullable((Boolean) tableProperties.get(CHANGE_DATA_FEED_ENABLED_PROPERTY));
     }
 }

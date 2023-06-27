@@ -16,6 +16,7 @@ package io.trino.plugin.cassandra;
 import com.datastax.oss.protocol.internal.util.Bytes;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.net.InetAddresses;
 import com.google.common.primitives.Shorts;
 import com.google.common.primitives.SignedBytes;
 import io.trino.spi.block.Block;
@@ -47,10 +48,13 @@ import io.trino.spi.type.UuidType;
 import io.trino.spi.type.VarcharType;
 import io.trino.testing.TestingConnectorContext;
 import io.trino.testing.TestingConnectorSession;
+import io.trino.type.IpAddressType;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -64,8 +68,6 @@ import static io.trino.plugin.cassandra.CassandraTestingUtils.TABLE_DELETE_DATA;
 import static io.trino.plugin.cassandra.CassandraTestingUtils.TABLE_TUPLE_TYPE;
 import static io.trino.plugin.cassandra.CassandraTestingUtils.TABLE_USER_DEFINED_TYPE;
 import static io.trino.plugin.cassandra.CassandraTestingUtils.createTestTables;
-import static io.trino.spi.connector.ConnectorSplitManager.SplitSchedulingStrategy.UNGROUPED_SCHEDULING;
-import static io.trino.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.BooleanType.BOOLEAN;
 import static io.trino.spi.type.DateTimeEncoding.packDateTimeWithZone;
@@ -74,8 +76,8 @@ import static io.trino.spi.type.IntegerType.INTEGER;
 import static io.trino.spi.type.RealType.REAL;
 import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TimeZoneKey.UTC_KEY;
-import static io.trino.spi.type.TimestampType.TIMESTAMP;
-import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
+import static io.trino.spi.type.TimestampType.TIMESTAMP_MILLIS;
+import static io.trino.spi.type.TimestampWithTimeZoneType.TIMESTAMP_TZ_MILLIS;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.spi.type.UuidType.UUID;
 import static io.trino.spi.type.UuidType.trinoUuidToJavaUuid;
@@ -188,7 +190,7 @@ public class TestCassandraConnector
 
         tableHandle = metadata.applyFilter(SESSION, tableHandle, Constraint.alwaysTrue()).get().getHandle();
 
-        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, UNGROUPED_SCHEDULING, DynamicFilter.EMPTY));
+        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, DynamicFilter.EMPTY, Constraint.alwaysTrue()));
 
         long rowNumber = 0;
         for (ConnectorSplit split : splits) {
@@ -260,7 +262,7 @@ public class TestCassandraConnector
 
         ConnectorTransactionHandle transaction = CassandraTransactionHandle.INSTANCE;
 
-        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, UNGROUPED_SCHEDULING, DynamicFilter.EMPTY));
+        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, DynamicFilter.EMPTY, Constraint.alwaysTrue()));
 
         long rowNumber = 0;
         for (ConnectorSplit split : splits) {
@@ -301,6 +303,7 @@ public class TestCassandraConnector
 
     @Test
     public void testGetUserDefinedType()
+            throws UnknownHostException
     {
         ConnectorTableHandle tableHandle = getTableHandle(tableUdt);
         ConnectorTableMetadata tableMetadata = metadata.getTableMetadata(SESSION, tableHandle);
@@ -311,7 +314,7 @@ public class TestCassandraConnector
 
         tableHandle = metadata.applyFilter(SESSION, tableHandle, Constraint.alwaysTrue()).get().getHandle();
 
-        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, UNGROUPED_SCHEDULING, DynamicFilter.EMPTY));
+        List<ConnectorSplit> splits = getAllSplits(splitManager.getSplits(transaction, SESSION, tableHandle, DynamicFilter.EMPTY, Constraint.alwaysTrue()));
 
         long rowNumber = 0;
         for (ConnectorSplit split : splits) {
@@ -335,16 +338,16 @@ public class TestCassandraConnector
                     assertEquals(keyValue, "key");
                     assertEquals(VARCHAR.getSlice(udtValue, 0).toStringUtf8(), "text");
                     assertEquals(trinoUuidToJavaUuid(UUID.getSlice(udtValue, 1)).toString(), "01234567-0123-0123-0123-0123456789ab");
-                    assertEquals(INTEGER.getLong(udtValue, 2), -2147483648);
+                    assertEquals(INTEGER.getInt(udtValue, 2), -2147483648);
                     assertEquals(BIGINT.getLong(udtValue, 3), -9223372036854775808L);
                     assertEquals(VARBINARY.getSlice(udtValue, 4).toStringUtf8(), "01234");
-                    assertEquals(TIMESTAMP.getLong(udtValue, 5), 117964800000L);
+                    assertEquals(TIMESTAMP_MILLIS.getLong(udtValue, 5), 117964800000L);
                     assertEquals(VARCHAR.getSlice(udtValue, 6).toStringUtf8(), "ansi");
                     assertTrue(BOOLEAN.getBoolean(udtValue, 7));
                     assertEquals(DOUBLE.getDouble(udtValue, 8), 99999999999999997748809823456034029568D);
                     assertEquals(DOUBLE.getDouble(udtValue, 9), 4.9407e-324);
                     assertEquals(REAL.getObjectValue(SESSION, udtValue, 10), 1.4E-45f);
-                    assertEquals(VARCHAR.getSlice(udtValue, 11).toStringUtf8(), "0.0.0.0");
+                    assertEquals(InetAddresses.toAddrString(InetAddress.getByAddress(IpAddressType.IPADDRESS.getSlice(udtValue, 11).getBytes())), "0.0.0.0");
                     assertEquals(VARCHAR.getSlice(udtValue, 12).toStringUtf8(), "varchar");
                     assertEquals(VARCHAR.getSlice(udtValue, 13).toStringUtf8(), "-9223372036854775808");
                     assertEquals(trinoUuidToJavaUuid(UUID.getSlice(udtValue, 14)).toString(), "d2177dd0-eaa2-11de-a572-001b779c76e3");
@@ -353,10 +356,10 @@ public class TestCassandraConnector
                     assertEquals(VARCHAR.getSlice(udtValue, 17).toStringUtf8(), "[true]");
                     SingleRowBlock tupleValueBlock = (SingleRowBlock) udtValue.getObject(18, Block.class);
                     assertThat(tupleValueBlock.getPositionCount()).isEqualTo(1);
-                    assertThat(INTEGER.getLong(tupleValueBlock, 0)).isEqualTo(123);
+                    assertThat(INTEGER.getInt(tupleValueBlock, 0)).isEqualTo(123);
                     SingleRowBlock udtValueBlock = (SingleRowBlock) udtValue.getObject(19, Block.class);
                     assertThat(udtValueBlock.getPositionCount()).isEqualTo(1);
-                    assertThat(INTEGER.getLong(udtValueBlock, 0)).isEqualTo(999);
+                    assertThat(INTEGER.getInt(udtValueBlock, 0)).isEqualTo(999);
 
                     long newCompletedBytes = cursor.getCompletedBytes();
                     assertTrue(newCompletedBytes >= completedBytes);
@@ -392,7 +395,7 @@ public class TestCassandraConnector
                 else if (DateType.DATE.equals(type)) {
                     toIntExact(cursor.getLong(columnIndex));
                 }
-                else if (TIMESTAMP_WITH_TIME_ZONE.equals(type)) {
+                else if (TIMESTAMP_TZ_MILLIS.equals(type)) {
                     cursor.getLong(columnIndex);
                 }
                 else if (DOUBLE.equals(type)) {
@@ -415,6 +418,9 @@ public class TestCassandraConnector
                 else if (UuidType.UUID.equals(type)) {
                     cursor.getSlice(columnIndex);
                 }
+                else if (IpAddressType.IPADDRESS.equals(type)) {
+                    cursor.getSlice(columnIndex);
+                }
                 else {
                     fail("Unknown primitive type " + type + " for column " + columnIndex);
                 }
@@ -433,7 +439,7 @@ public class TestCassandraConnector
     {
         ImmutableList.Builder<ConnectorSplit> splits = ImmutableList.builder();
         while (!splitSource.isFinished()) {
-            splits.addAll(getFutureValue(splitSource.getNextBatch(NOT_PARTITIONED, 1000)).getSplits());
+            splits.addAll(getFutureValue(splitSource.getNextBatch(1000)).getSplits());
         }
         return splits.build();
     }
@@ -452,8 +458,8 @@ public class TestCassandraConnector
 
     private CassandraTableHandle getTableHandle(Optional<List<CassandraPartition>> partitions, String clusteringKeyPredicates)
     {
-        CassandraTableHandle handle = (CassandraTableHandle) getTableHandle(tableForDelete);
-        return new CassandraTableHandle(handle.getSchemaName(), handle.getTableName(), partitions, clusteringKeyPredicates);
+        CassandraNamedRelationHandle handle = ((CassandraTableHandle) getTableHandle(tableForDelete)).getRequiredNamedRelation();
+        return new CassandraTableHandle(new CassandraNamedRelationHandle(handle.getSchemaName(), handle.getTableName(), partitions, clusteringKeyPredicates));
     }
 
     private CassandraPartition createPartition(long value1, long value2)

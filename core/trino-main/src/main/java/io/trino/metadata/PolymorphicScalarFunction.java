@@ -18,9 +18,11 @@ import com.google.common.primitives.Primitives;
 import io.trino.metadata.PolymorphicScalarFunctionBuilder.MethodAndNativeContainerTypes;
 import io.trino.metadata.PolymorphicScalarFunctionBuilder.MethodsGroup;
 import io.trino.metadata.PolymorphicScalarFunctionBuilder.SpecializeContext;
-import io.trino.operator.scalar.ChoicesScalarFunctionImplementation;
-import io.trino.operator.scalar.ChoicesScalarFunctionImplementation.ScalarImplementationChoice;
-import io.trino.operator.scalar.ScalarFunctionImplementation;
+import io.trino.operator.scalar.ChoicesSpecializedSqlScalarFunction;
+import io.trino.operator.scalar.ChoicesSpecializedSqlScalarFunction.ScalarImplementationChoice;
+import io.trino.operator.scalar.SpecializedSqlScalarFunction;
+import io.trino.spi.function.BoundSignature;
+import io.trino.spi.function.FunctionMetadata;
 import io.trino.spi.function.InvocationConvention.InvocationArgumentConvention;
 import io.trino.spi.function.InvocationConvention.InvocationReturnConvention;
 import io.trino.spi.type.Type;
@@ -48,7 +50,7 @@ class PolymorphicScalarFunction
     }
 
     @Override
-    protected ScalarFunctionImplementation specialize(BoundSignature boundSignature)
+    protected SpecializedSqlScalarFunction specialize(BoundSignature boundSignature)
     {
         ImmutableList.Builder<ScalarImplementationChoice> implementationChoices = ImmutableList.builder();
 
@@ -58,7 +60,7 @@ class PolymorphicScalarFunction
             implementationChoices.add(getScalarFunctionImplementationChoice(functionBinding, choice));
         }
 
-        return new ChoicesScalarFunctionImplementation(boundSignature, implementationChoices.build());
+        return new ChoicesSpecializedSqlScalarFunction(boundSignature, implementationChoices.build());
     }
 
     private ScalarImplementationChoice getScalarFunctionImplementationChoice(
@@ -169,13 +171,10 @@ class PolymorphicScalarFunction
 
     private static Class<?> getNullAwareContainerType(Class<?> clazz, InvocationReturnConvention returnConvention)
     {
-        switch (returnConvention) {
-            case NULLABLE_RETURN:
-                return Primitives.wrap(clazz);
-            case FAIL_ON_NULL:
-                return clazz;
-        }
-        throw new UnsupportedOperationException("Unknown return convention: " + returnConvention);
+        return switch (returnConvention) {
+            case NULLABLE_RETURN -> Primitives.wrap(clazz);
+            case DEFAULT_ON_NULL, FAIL_ON_NULL -> clazz;
+        };
     }
 
     static final class PolymorphicScalarFunctionChoice

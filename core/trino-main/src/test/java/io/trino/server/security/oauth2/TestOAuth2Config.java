@@ -48,6 +48,7 @@ public class TestOAuth2Config
                 .setMaxClockSkew(new Duration(1, MINUTES))
                 .setUserMappingPattern(null)
                 .setUserMappingFile(null)
+                .setEnableRefreshTokens(false)
                 .setEnableDiscovery(true));
     }
 
@@ -63,12 +64,13 @@ public class TestOAuth2Config
                 .put("http-server.authentication.oauth2.client-secret", "consumer-secret")
                 .put("http-server.authentication.oauth2.scopes", "email,offline")
                 .put("http-server.authentication.oauth2.principal-field", "some-field")
-                .put("http-server.authentication.oauth2.groups-field", "groups")
+                .put("deprecated.http-server.authentication.oauth2.groups-field", "groups")
                 .put("http-server.authentication.oauth2.additional-audiences", "test-aud1,test-aud2")
                 .put("http-server.authentication.oauth2.challenge-timeout", "90s")
                 .put("http-server.authentication.oauth2.max-clock-skew", "15s")
                 .put("http-server.authentication.oauth2.user-mapping.pattern", "(.*)@something")
                 .put("http-server.authentication.oauth2.user-mapping.file", userMappingFile.toString())
+                .put("http-server.authentication.oauth2.refresh-tokens", "true")
                 .put("http-server.authentication.oauth2.oidc.discovery", "false")
                 .buildOrThrow();
 
@@ -85,6 +87,7 @@ public class TestOAuth2Config
                 .setMaxClockSkew(new Duration(15, SECONDS))
                 .setUserMappingPattern("(.*)@something")
                 .setUserMappingFile(userMappingFile.toFile())
+                .setEnableRefreshTokens(true)
                 .setEnableDiscovery(false);
 
         assertFullMapping(properties, expected);

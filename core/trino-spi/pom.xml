@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.trino</groupId>
         <artifactId>trino-root</artifactId>
-        <version>385-SNAPSHOT</version>
+        <version>421-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -15,6 +15,7 @@
     <properties>
         <air.main.basedir>${project.parent.basedir}</air.main.basedir>
         <released-artifacts.dir>${project.build.directory}/released-artifacts</released-artifacts.dir>
+        <trino.check.skip-revapi>${air.check.skip-basic}</trino.check.skip-revapi>
     </properties>
 
     <!-- the SPI should have only minimal dependencies -->
@@ -36,8 +37,20 @@
         </dependency>
 
         <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-context</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
             <groupId>org.openjdk.jol</groupId>
             <artifactId>jol-core</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- for testing -->
@@ -90,6 +103,18 @@
         </dependency>
 
         <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-core</artifactId>
             <scope>test</scope>
@@ -129,60 +154,315 @@
 
         <plugins>
             <plugin>
-                <groupId>org.codehaus.gmaven</groupId>
-                <artifactId>groovy-maven-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>released-version</id>
-                        <phase>generate-test-resources</phase>
-                        <goals>
-                            <goal>execute</goal>
-                        </goals>
-                        <configuration>
-                            <source>
-                                def match = project.version =~ /(\d+)(?:-SNAPSHOT)?/
-                                if (!match.matches()) {
-                                    throw new RuntimeException("Invalid version: " + project.version)
-                                }
-                                int version = (match.group(1) as int) - 1
-                                project.properties.setProperty('releasedVersion', version as String)
-                            </source>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-
-            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <dependencies>
+                    <!-- allow both JUnit and TestNG -->
+                    <dependency>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-junit-platform</artifactId>
+                        <version>${dep.plugin.surefire.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.apache.maven.surefire</groupId>
+                        <artifactId>surefire-testng</artifactId>
+                        <version>${dep.plugin.surefire.version}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+            <plugin>
+                <groupId>org.revapi</groupId>
+                <artifactId>revapi-maven-plugin</artifactId>
+                <version>0.15.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.revapi</groupId>
+                        <artifactId>revapi-java</artifactId>
+                        <version>0.28.1</version>
+                    </dependency>
+                </dependencies>
                 <executions>
                     <execution>
-                        <id>copy</id>
-                        <phase>generate-test-resources</phase>
                         <goals>
-                            <goal>copy</goal>
+                            <goal>check</goal>
                         </goals>
-                        <configuration>
-                            <skip>false</skip>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>io.trino</groupId>
-                                    <artifactId>trino-spi</artifactId>
-                                    <version>${releasedVersion}</version>
-                                    <type>jar</type>
-                                    <outputDirectory>${released-artifacts.dir}</outputDirectory>
-                                </artifactItem>
-                                <artifactItem>
-                                    <!-- slice is needed when loading trino-spi classes for backward compatibility tests -->
-                                    <groupId>io.airlift</groupId>
-                                    <artifactId>slice</artifactId>
-                                    <type>jar</type>
-                                    <outputDirectory>${released-artifacts.dir}</outputDirectory>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
                     </execution>
                 </executions>
+                <configuration>
+                    <skip>${trino.check.skip-revapi}</skip>
+                    <ignoreSuggestionsFormat>xml</ignoreSuggestionsFormat>
+                    <analysisConfiguration>
+                        <revapi.filter>
+                            <elements>
+                                <exclude>
+                                    <item>
+                                        <matcher>java</matcher>
+                                        <match>@io.trino.spi.Experimental(*) ^*;</match>
+                                    </item>
+                                </exclude>
+                            </elements>
+                        </revapi.filter>
+                        <revapi.differences>
+                            <ignore>true</ignore>
+                            <differences>
+                                <!-- Allow adding new annotations (such as @Nullable) -->
+                                <item>
+                                    <code>java.annotation.added</code>
+                                </item>
+                                <!-- Allow changing enum constant order (e.g., StandardErrorCode) -->
+                                <item>
+                                    <code>java.field.enumConstantOrderChanged</code>
+                                </item>
+                                <!-- Allow arbitrary changes to unstable APIs -->
+                                <item>
+                                    <regex>true</regex>
+                                    <code>java.method.numberOfParametersChanged</code>
+                                    <old>
+                                        <matcher>java</matcher>
+                                        <match>@io.trino.spi.Unstable *;</match>
+                                    </old>
+                                </item>
+                                <!-- Allow removing things that were previously deprecated -->
+                                <item>
+                                    <regex>true</regex>
+                                    <code>java\.(class|method|field)\.removed</code>
+                                    <old>
+                                        <matcher>java</matcher>
+                                        <match>@java.lang.Deprecated(*) ^*;</match>
+                                    </old>
+                                </item>
+                                <!-- Backwards incompatible changes since the previous release -->
+                                <!-- Any exclusions below can be deleted after each release -->
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.SingleArrayBlockWriter io.trino.spi.block.ArrayBlockBuilder::beginBlockEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::beginBlockEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.SingleMapBlockWriter io.trino.spi.block.MapBlockBuilder::beginBlockEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.SingleRowBlockWriter io.trino.spi.block.RowBlockBuilder::beginBlockEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.class.removed</code>
+                                    <old>class io.trino.spi.block.SingleArrayBlockWriter</old>
+                                </item>
+                                <item>
+                                    <code>java.class.removed</code>
+                                    <old>class io.trino.spi.block.SingleMapBlockWriter</old>
+                                </item>
+                                <item>
+                                    <code>java.class.removed</code>
+                                    <old>class io.trino.spi.block.SingleRowBlockWriter</old>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.ArrayType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.ArrayBlockBuilder io.trino.spi.type.ArrayType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.ArrayType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</old>
+                                    <new>method io.trino.spi.block.ArrayBlockBuilder io.trino.spi.type.ArrayType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.MapType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.MapBlockBuilder io.trino.spi.type.MapType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.MapType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</old>
+                                    <new>method io.trino.spi.block.MapBlockBuilder io.trino.spi.type.MapType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.RowType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.RowBlockBuilder io.trino.spi.type.RowType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.RowType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</old>
+                                    <new>method io.trino.spi.block.RowBlockBuilder io.trino.spi.type.RowType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.AbstractSingleArrayBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.AbstractSingleMapBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.AbstractSingleRowBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.AbstractVariableWidthBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.Block::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.DictionaryBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.LazyBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method void io.trino.spi.block.RunLengthEncodedBlock::writeBytesTo(int, int, int, io.trino.spi.block.BlockBuilder)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.AbstractVariableWidthType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.VariableWidthBlockBuilder io.trino.spi.type.AbstractVariableWidthType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.AbstractVariableWidthType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</old>
+                                    <new>method io.trino.spi.block.VariableWidthBlockBuilder io.trino.spi.type.AbstractVariableWidthType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.CharType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.VariableWidthBlockBuilder io.trino.spi.type.CharType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.returnTypeChangedCovariantly</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.type.VarcharType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</old>
+                                    <new>method io.trino.spi.block.VariableWidthBlockBuilder io.trino.spi.type.VarcharType::createBlockBuilder(io.trino.spi.block.BlockBuilderStatus, int)</new>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.ArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.ByteArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.Fixed12BlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.Int128ArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.IntArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.LongArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.MapBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.RowBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.ShortArrayBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::closeEntry()</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::writeBytes(io.airlift.slice.Slice, int, int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::writeBytes(io.airlift.slice.Slice, int, int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::writeByte(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.parameterTypeChanged</code>
+                                    <old>parameter io.trino.spi.block.BlockBuilder io.trino.spi.block.ByteArrayBlockBuilder::writeByte(===int===)</old>
+                                    <new>parameter io.trino.spi.block.BlockBuilder io.trino.spi.block.ByteArrayBlockBuilder::writeByte(===byte===)</new>
+                                    <parameterIndex>0</parameterIndex>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::writeByte(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::writeShort(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.parameterTypeChanged</code>
+                                    <old>parameter io.trino.spi.block.BlockBuilder io.trino.spi.block.ShortArrayBlockBuilder::writeShort(===int===)</old>
+                                    <new>parameter io.trino.spi.block.BlockBuilder io.trino.spi.block.ShortArrayBlockBuilder::writeShort(===short===)</new>
+                                    <parameterIndex>0</parameterIndex>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::writeShort(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::writeInt(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.Fixed12BlockBuilder::writeInt(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::writeInt(int)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.BlockBuilder::writeLong(long)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.Fixed12BlockBuilder::writeLong(long)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.Int128ArrayBlockBuilder::writeLong(long)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.removed</code>
+                                    <old>method io.trino.spi.block.BlockBuilder io.trino.spi.block.VariableWidthBlockBuilder::writeLong(long)</old>
+                                </item>
+                                <item>
+                                    <code>java.method.visibilityReduced</code>
+                                    <old>method void io.trino.spi.type.TypeOperatorDeclaration.Builder::&lt;init&gt;(java.lang.Class&lt;?&gt;)</old>
+                                    <new>method void io.trino.spi.type.TypeOperatorDeclaration.Builder::&lt;init&gt;(java.lang.Class&lt;?&gt;)</new>
+                                    <oldVisibility>public</oldVisibility>
+                                    <newVisibility>private</newVisibility>
+                                    <justification>Constructor should have never been public as there is a static factory method</justification>
+                                </item>
+                            </differences>
+                        </revapi.differences>
+                    </analysisConfiguration>
+                </configuration>
             </plugin>
         </plugins>
     </build>

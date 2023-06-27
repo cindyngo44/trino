@@ -14,7 +14,9 @@
 package io.trino.tests.product.hive;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.math.IntMath;
 import com.google.inject.Inject;
+import com.google.inject.name.Named;
 import io.trino.plugin.hive.HiveTimestampPrecision;
 import io.trino.tempto.assertions.QueryAssert;
 import io.trino.tempto.query.QueryResult;
@@ -22,9 +24,8 @@ import io.trino.tests.product.utils.JdbcDriverUtils;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import javax.inject.Named;
-
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.Date;
@@ -39,8 +40,6 @@ import java.util.function.Function;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.tempto.assertions.QueryAssert.Row.row;
-import static io.trino.tempto.assertions.QueryAssert.assertQueryFailure;
-import static io.trino.tempto.assertions.QueryAssert.assertThat;
 import static io.trino.tests.product.TestGroups.STORAGE_FORMATS_DETAILED;
 import static io.trino.tests.product.utils.JdbcDriverUtils.setSessionProperty;
 import static io.trino.tests.product.utils.QueryExecutors.onHive;
@@ -48,6 +47,7 @@ import static io.trino.tests.product.utils.QueryExecutors.onTrino;
 import static java.lang.String.format;
 import static java.util.Locale.ENGLISH;
 import static java.util.stream.Collectors.joining;
+import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestHiveCompatibility
         extends HiveProductTest
@@ -72,9 +72,6 @@ public class TestHiveCompatibility
         onTrino().executeQuery(format("DROP TABLE IF EXISTS %s", tableName));
 
         boolean isAvroStorageFormat = "AVRO".equals(storageFormat.getName());
-        boolean isParquetStorageFormat = "PARQUET".equals(storageFormat.getName());
-        boolean isParquetOptimizedWriterEnabled = Boolean.parseBoolean(
-                storageFormat.getSessionProperties().getOrDefault("hive.experimental_parquet_optimized_writer_enabled", "false"));
         List<HiveCompatibilityColumnData> columnDataList = new ArrayList<>();
         columnDataList.add(new HiveCompatibilityColumnData("c_boolean", "boolean", "true", true));
         if (!isAvroStorageFormat) {
@@ -86,34 +83,26 @@ public class TestHiveCompatibility
         columnDataList.add(new HiveCompatibilityColumnData("c_bigint", "bigint", "9223372036854775807", 9223372036854775807L));
         columnDataList.add(new HiveCompatibilityColumnData("c_real", "real", "123.345", 123.345d));
         columnDataList.add(new HiveCompatibilityColumnData("c_double", "double", "234.567", 234.567d));
-        if (!(isParquetStorageFormat && isParquetOptimizedWriterEnabled)) {
-            // Hive expects `FIXED_LEN_BYTE_ARRAY` for decimal values irrespective of the Parquet specification which allows `INT32`, `INT64` for short precision decimal types
-            columnDataList.add(new HiveCompatibilityColumnData("c_decimal_10_0", "decimal(10,0)", "346", new BigDecimal("346")));
-            columnDataList.add(new HiveCompatibilityColumnData("c_decimal_10_2", "decimal(10,2)", "12345678.91", new BigDecimal("12345678.91")));
-        }
+        // Hive expects `FIXED_LEN_BYTE_ARRAY` for decimal values irrespective of the Parquet specification which allows `INT32`, `INT64` for short precision decimal types
+        columnDataList.add(new HiveCompatibilityColumnData("c_decimal_10_0", "decimal(10,0)", "346", new BigDecimal("346")));
+        columnDataList.add(new HiveCompatibilityColumnData("c_decimal_10_2", "decimal(10,2)", "12345678.91", new BigDecimal("12345678.91")));
         columnDataList.add(new HiveCompatibilityColumnData("c_decimal_38_5", "decimal(38,5)", "1234567890123456789012.34567", new BigDecimal("1234567890123456789012.34567")));
         columnDataList.add(new HiveCompatibilityColumnData("c_char", "char(10)", "'ala ma    '", "ala ma    "));
         columnDataList.add(new HiveCompatibilityColumnData("c_varchar", "varchar(10)", "'ala ma kot'", "ala ma kot"));
         columnDataList.add(new HiveCompatibilityColumnData("c_string", "varchar", "'ala ma kota'", "ala ma kota"));
         columnDataList.add(new HiveCompatibilityColumnData("c_binary", "varbinary", "X'62696e61727920636f6e74656e74'", "binary content".getBytes(StandardCharsets.UTF_8)));
-        if (!(isParquetStorageFormat && isHiveVersionBefore12())) {
-            // The PARQUET storage format does not support DATE type in CDH5 distribution
-            columnDataList.add(new HiveCompatibilityColumnData("c_date", "date", "DATE '2015-05-10'", Date.valueOf(LocalDate.of(2015, 5, 10))));
-        }
+        columnDataList.add(new HiveCompatibilityColumnData("c_date", "date", "DATE '2015-05-10'", Date.valueOf(LocalDate.of(2015, 5, 10))));
         if (isAvroStorageFormat) {
-            if (!isHiveVersionBefore12()) {
-                // The AVRO storage format does not support TIMESTAMP type in CDH5 distribution
-                columnDataList.add(new HiveCompatibilityColumnData(
-                        "c_timestamp",
-                        "timestamp",
-                        "TIMESTAMP '2015-05-10 12:15:35.123'",
-                        isHiveWithBrokenAvroTimestamps()
-                                // TODO (https://github.com/trinodb/trino/issues/1218) requires https://issues.apache.org/jira/browse/HIVE-21002
-                                ? Timestamp.valueOf(LocalDateTime.of(2015, 5, 10, 6, 30, 35, 123_000_000))
-                                : Timestamp.valueOf(LocalDateTime.of(2015, 5, 10, 12, 15, 35, 123_000_000))));
-            }
+            columnDataList.add(new HiveCompatibilityColumnData(
+                    "c_timestamp",
+                    "timestamp",
+                    "TIMESTAMP '2015-05-10 12:15:35.123'",
+                    isHiveWithBrokenAvroTimestamps()
+                            // TODO (https://github.com/trinodb/trino/issues/1218) requires https://issues.apache.org/jira/browse/HIVE-21002
+                            ? Timestamp.valueOf(LocalDateTime.of(2015, 5, 10, 6, 30, 35, 123_000_000))
+                            : Timestamp.valueOf(LocalDateTime.of(2015, 5, 10, 12, 15, 35, 123_000_000))));
         }
-        else if (!(isParquetStorageFormat && isParquetOptimizedWriterEnabled)) {
+        else {
             // Hive expects `INT96` (deprecated on Parquet) for timestamp values
             columnDataList.add(new HiveCompatibilityColumnData(
                     "c_timestamp",
@@ -172,13 +161,9 @@ public class TestHiveCompatibility
     }
 
     @Test(groups = STORAGE_FORMATS_DETAILED)
-    public void testTimestampFieldWrittenByOptimizedParquetWriterCannotBeReadByHive()
+    public void testTimestampFieldWrittenByOptimizedParquetWriterCanBeReadByHive()
             throws Exception
     {
-        // only admin user is allowed to change session properties
-        setAdminRole(onTrino().getConnection());
-        setSessionProperty(onTrino().getConnection(), "hive.experimental_parquet_optimized_writer_enabled", "true");
-
         String tableName = "parquet_table_timestamp_created_in_trino";
         onTrino().executeQuery("DROP TABLE IF EXISTS " + tableName);
         onTrino().executeQuery("CREATE TABLE " + tableName + "(timestamp_precision varchar, a_timestamp timestamp) WITH (format = 'PARQUET')");
@@ -186,28 +171,37 @@ public class TestHiveCompatibility
             setSessionProperty(onTrino().getConnection(), "hive.timestamp_precision", hiveTimestampPrecision.name());
             onTrino().executeQuery("INSERT INTO " + tableName + " VALUES ('" + hiveTimestampPrecision.name() + "', TIMESTAMP '2021-01-05 12:01:00.111901001')");
             // Hive expects `INT96` (deprecated on Parquet) for timestamp values
-            assertQueryFailure(() -> onHive().executeQuery("SELECT a_timestamp FROM " + tableName + " WHERE timestamp_precision = '" + hiveTimestampPrecision.name() + "'"))
-                    .hasMessageMatching(".*java.lang.ClassCastException: org.apache.hadoop.io.LongWritable cannot be cast to org.apache.hadoop.hive.serde2.io.(TimestampWritable|TimestampWritableV2)");
+            int precisionScalingFactor = (int) Math.pow(10, 9 - hiveTimestampPrecision.getPrecision());
+            int nanoOfSecond = IntMath.divide(111901001, precisionScalingFactor, RoundingMode.HALF_UP) * precisionScalingFactor;
+            LocalDateTime expectedValue = LocalDateTime.of(2021, 1, 5, 12, 1, 0, nanoOfSecond);
+            assertThat(onHive().executeQuery("SELECT a_timestamp FROM " + tableName + " WHERE timestamp_precision = '" + hiveTimestampPrecision.name() + "'"))
+                    .containsOnly(row(Timestamp.valueOf(expectedValue)));
+            // Verify with hive.parquet.timestamp.skip.conversion explicitly enabled
+            // Apache Hive 3.2 and above enable this by default
+            try {
+                onHive().executeQuery("SET hive.parquet.timestamp.skip.conversion=true");
+                assertThat(onHive().executeQuery("SELECT a_timestamp FROM " + tableName + " WHERE timestamp_precision = '" + hiveTimestampPrecision.name() + "'"))
+                        .containsOnly(row(Timestamp.valueOf(expectedValue)));
+            }
+            finally {
+                onHive().executeQuery("RESET");
+            }
         }
         onTrino().executeQuery(format("DROP TABLE %s", tableName));
     }
 
     @Test(groups = STORAGE_FORMATS_DETAILED)
-    public void testSmallDecimalFieldWrittenByOptimizedParquetWriterCannotBeReadByHive()
+    public void testSmallDecimalFieldWrittenByOptimizedParquetWriterCanBeReadByHive()
             throws Exception
     {
-        // only admin user is allowed to change session properties
-        setAdminRole(onTrino().getConnection());
-        setSessionProperty(onTrino().getConnection(), "hive.experimental_parquet_optimized_writer_enabled", "true");
-
         String tableName = "parquet_table_small_decimal_created_in_trino";
         onTrino().executeQuery("DROP TABLE IF EXISTS " + tableName);
         onTrino().executeQuery("CREATE TABLE " + tableName + " (a_decimal DECIMAL(5,0)) WITH (format='PARQUET')");
         onTrino().executeQuery("INSERT INTO " + tableName + " VALUES (123)");
 
         // Hive expects `FIXED_LEN_BYTE_ARRAY` for decimal values irrespective of the Parquet specification which allows `INT32`, `INT64` for short precision decimal types
-        assertQueryFailure(() -> onHive().executeQuery("SELECT a_decimal FROM " + tableName))
-                .hasMessageMatching(".*ParquetDecodingException: Can not read value at 1 in block 0 in file .*");
+        assertThat(onHive().executeQuery("SELECT a_decimal FROM " + tableName))
+                .containsOnly(row(new BigDecimal("123")));
 
         onTrino().executeQuery(format("DROP TABLE %s", tableName));
     }

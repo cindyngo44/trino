@@ -2,10 +2,11 @@
 Properties reference
 ====================
 
-This section describes the most important config properties and (where
+This section describes the most important configuration properties and (where
 applicable) their corresponding :ref:`session properties
 <session-properties-definition>`, that may be used to tune Trino or alter its
-behavior when required.
+behavior when required. Unless specified otherwise, configuration properties
+must be set on the coordinator and all worker nodes.
 
 The following pages are not a complete list of all configuration and
 session properties available in Trino, and do not include any connector-specific
@@ -28,6 +29,7 @@ properties, refer to the :doc:`connector documentation </connector/>`.
     Logging <properties-logging>
     Web UI <properties-web-interface>
     Regular expression function <properties-regexp-function>
+    HTTP client <properties-http-client>
 
 Property value types
 --------------------

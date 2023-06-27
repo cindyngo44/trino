@@ -13,6 +13,7 @@
  */
 package io.trino.plugin.atop;
 
+import com.google.inject.Inject;
 import io.trino.spi.Node;
 import io.trino.spi.NodeManager;
 import io.trino.spi.connector.ConnectorSession;
@@ -21,13 +22,12 @@ import io.trino.spi.connector.ConnectorSplitManager;
 import io.trino.spi.connector.ConnectorSplitSource;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTransactionHandle;
+import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.DynamicFilter;
 import io.trino.spi.connector.FixedSplitSource;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.Range;
 import io.trino.spi.predicate.ValueSet;
-
-import javax.inject.Inject;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -50,7 +50,6 @@ public class AtopSplitManager
     public AtopSplitManager(NodeManager nodeManager, AtopConnectorConfig config)
     {
         this.nodeManager = requireNonNull(nodeManager, "nodeManager is null");
-        requireNonNull(config, "config is null");
         timeZone = config.getTimeZoneId();
         maxHistoryDays = config.getMaxHistoryDays();
     }
@@ -60,8 +59,8 @@ public class AtopSplitManager
             ConnectorTransactionHandle transaction,
             ConnectorSession session,
             ConnectorTableHandle table,
-            SplitSchedulingStrategy splitSchedulingStrategy,
-            DynamicFilter dynamicFilter)
+            DynamicFilter dynamicFilter,
+            Constraint constraint)
     {
         AtopTableHandle tableHandle = (AtopTableHandle) table;
 

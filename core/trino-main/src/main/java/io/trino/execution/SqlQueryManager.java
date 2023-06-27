@@ -15,6 +15,8 @@ package io.trino.execution;
 
 import com.google.common.collect.Ordering;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.inject.Inject;
+import io.airlift.concurrent.SetThreadName;
 import io.airlift.concurrent.ThreadPoolExecutorMBean;
 import io.airlift.log.Logger;
 import io.airlift.units.DataSize;
@@ -30,13 +32,12 @@ import io.trino.server.protocol.Slug;
 import io.trino.spi.QueryId;
 import io.trino.spi.TrinoException;
 import io.trino.sql.planner.Plan;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import javax.annotation.concurrent.ThreadSafe;
-import javax.inject.Inject;
 
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -148,17 +149,23 @@ public class SqlQueryManager
     }
 
     @Override
-    public void addOutputInfoListener(QueryId queryId, Consumer<QueryOutputInfo> listener)
+    public void setOutputInfoListener(QueryId queryId, Consumer<QueryOutputInfo> listener)
     {
         requireNonNull(listener, "listener is null");
 
-        queryTracker.getQuery(queryId).addOutputInfoListener(listener);
+        queryTracker.getQuery(queryId).setOutputInfoListener(listener);
     }
 
     @Override
     public void outputTaskFailed(TaskId taskId, Throwable failure)
     {
         queryTracker.getQuery(taskId.getQueryId()).outputTaskFailed(taskId, failure);
+    }
+
+    @Override
+    public void resultsConsumed(QueryId queryId)
+    {
+        queryTracker.getQuery(queryId).resultsConsumed();
     }
 
     @Override
@@ -220,6 +227,12 @@ public class SqlQueryManager
     }
 
     @Override
+    public boolean hasQuery(QueryId queryId)
+    {
+        return queryTracker.hasQuery(queryId);
+    }
+
+    @Override
     public void recordHeartbeat(QueryId queryId)
     {
         queryTracker.tryGetQuery(queryId)
@@ -240,7 +253,9 @@ public class SqlQueryManager
             queryTracker.expireQuery(queryExecution.getQueryId());
         });
 
-        queryExecution.start();
+        try (SetThreadName ignored = new SetThreadName("Query-%s", queryExecution.getQueryId())) {
+            queryExecution.start();
+        }
     }
 
     @Override

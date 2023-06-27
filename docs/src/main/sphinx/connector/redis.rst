@@ -12,8 +12,8 @@ used to join data between different systems like Redis and Hive.
 Each Redis key/value pair is presented as a single row in Trino. Rows can be
 broken down into cells by using table definition files.
 
-Only Redis string and hash value types are supported; sets and zsets cannot be
-queried from Trino.
+Currently, only Redis key of string and zset types are supported, only Redis value of
+string and hash types are supported.
 
 Requirements
 ------------
@@ -29,8 +29,8 @@ Configuration
 -------------
 
 To configure the Redis connector, create a catalog properties file
-``etc/catalog/redis.properties`` with the following content,
-replacing the properties as appropriate:
+``etc/catalog/example.properties`` with the following content, replacing the
+properties as appropriate:
 
 .. code-block:: text
 
@@ -51,7 +51,7 @@ Configuration properties
 The following configuration properties are available:
 
 ======================================  ==============================================================
-Property Name                           Description
+Property name                           Description
 ======================================  ==============================================================
 ``redis.table-names``                   List of all tables provided by the catalog
 ``redis.default-schema``                Default schema name for tables
@@ -273,3 +273,40 @@ SQL support
 The connector provides :ref:`globally available <sql-globally-available>` and
 :ref:`read operation <sql-read-operations>` statements to access data and
 metadata in Redis.
+
+Performance
+-----------
+
+The connector includes a number of performance improvements, detailed in the
+following sections.
+
+.. _redis-pushdown:
+
+Pushdown
+^^^^^^^^
+
+.. include:: pushdown-correctness-behavior.fragment
+
+.. _redis-predicate-pushdown:
+
+Predicate pushdown support
+""""""""""""""""""""""""""
+
+The connector supports pushdown of keys of ``string`` type only, the ``zset``
+type is not supported. Key pushdown is not supported when multiple key fields
+are defined in the table definition file.
+
+The connector supports pushdown of equality predicates, such as ``IN`` or ``=``.
+Inequality predicates, such as ``!=``, and range predicates, such as ``>``,
+``<``, or ``BETWEEN`` are not pushed down.
+
+In the following example, the predicate of the first query is not pushed down
+since ``>`` is a range predicate. The other queries are pushed down:
+
+.. code-block:: sql
+
+    -- Not pushed down
+    SELECT * FROM nation WHERE redis_key > 'CANADA';
+    -- Pushed down
+    SELECT * FROM nation WHERE redis_key = 'CANADA';
+    SELECT * FROM nation WHERE redis_key IN ('CANADA', 'POLAND');

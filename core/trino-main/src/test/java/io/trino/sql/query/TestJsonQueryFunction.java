@@ -255,6 +255,15 @@ public class TestJsonQueryFunction
         assertThat(assertions.query(
                 "SELECT json_query('" + INPUT + "', 'lax $parameter' PASSING DATE '2001-01-31' AS \"parameter\")"))
                 .matches("VALUES cast(null AS varchar)");
+
+        // parameter cast to varchar
+        assertThat(assertions.query(
+                "SELECT json_query('" + INPUT + "', 'lax $parameter' PASSING INTERVAL '2' DAY AS \"parameter\")"))
+                .matches("VALUES cast('\"2 00:00:00.000\"' AS varchar)");
+
+        assertThat(assertions.query(
+                "SELECT json_query('" + INPUT + "', 'lax $parameter' PASSING UUID '12151fd2-7586-11e9-8f9e-2a86e4085a59' AS \"parameter\")"))
+                .matches("VALUES cast('\"12151fd2-7586-11e9-8f9e-2a86e4085a59\"' AS varchar)");
     }
 
     @Test
@@ -413,5 +422,19 @@ public class TestJsonQueryFunction
         assertThat(assertions.query(
                 "SELECT json_query('" + INPUT + "', 'lax $var' PASSING null FORMAT JSON AS \"var\" EMPTY ARRAY ON EMPTY)"))
                 .matches("VALUES cast('[]' AS  varchar)");
+    }
+
+    @Test
+    public void testDescendantMemberAccessor()
+    {
+        assertThat(assertions.query("""
+                SELECT json_query(
+                                '{"a" : {"b" : 1}, "c" :  [true, {"c" : {"c" : null}}]}',
+                                'lax $..c'
+                                WITH ARRAY WRAPPER)
+                """))
+                .matches("""
+                        VALUES cast('[[true,{"c":{"c":null}}],{"c":null},null]'AS varchar)
+                        """);
     }
 }

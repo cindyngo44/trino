@@ -13,12 +13,10 @@
  */
 package io.trino.plugin.hive.metastore.thrift;
 
-import io.trino.plugin.hive.authentication.HiveIdentity;
+import com.google.inject.Inject;
 import io.trino.plugin.hive.metastore.HiveMetastore;
 import io.trino.plugin.hive.metastore.HiveMetastoreFactory;
 import io.trino.spi.security.ConnectorIdentity;
-
-import javax.inject.Inject;
 
 import java.util.Optional;
 
@@ -27,23 +25,23 @@ import static java.util.Objects.requireNonNull;
 public class BridgingHiveMetastoreFactory
         implements HiveMetastoreFactory
 {
-    private final ThriftMetastore thriftMetastore;
+    private final ThriftMetastoreFactory thriftMetastoreFactory;
 
     @Inject
-    public BridgingHiveMetastoreFactory(ThriftMetastore thriftMetastore)
+    public BridgingHiveMetastoreFactory(ThriftMetastoreFactory thriftMetastoreFactory)
     {
-        this.thriftMetastore = requireNonNull(thriftMetastore, "thriftMetastore is null");
+        this.thriftMetastoreFactory = requireNonNull(thriftMetastoreFactory, "thriftMetastore is null");
     }
 
     @Override
     public boolean isImpersonationEnabled()
     {
-        return thriftMetastore.isImpersonationEnabled();
+        return thriftMetastoreFactory.isImpersonationEnabled();
     }
 
     @Override
     public HiveMetastore createMetastore(Optional<ConnectorIdentity> identity)
     {
-        return new BridgingHiveMetastore(thriftMetastore, identity.map(HiveIdentity::new).orElse(HiveIdentity.none()));
+        return new BridgingHiveMetastore(thriftMetastoreFactory.createMetastore(identity));
     }
 }
